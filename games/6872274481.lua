@@ -124,7 +124,7 @@ local Reach = {}
 local HitBoxes = {}
 local TrapDisabler
 local AntiFallPart
-local bedwars, remotes, sides, oldinvrender, oldSwing = {}, {}, {}
+local bedwars, remotes, sides, oldinvrender, oldSwing, rakNet = {}, {}, {}, false
 local originalKnit
 local function getAccountTier(player)
 	if getgenv().getAccountTier then
@@ -877,6 +877,13 @@ end)
 entitylib.start()
 
 run(function()
+	task.spawn(function()
+		if typeof(raknet) == 'table' and raknet then
+			rakNet = true		
+		else
+			rakNet = false		
+		end
+	end)
 	local KnitInit, Knit
 	repeat
 		KnitInit, Knit = pcall(function()
