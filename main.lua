@@ -351,7 +351,14 @@ do
 			if res.StatusCode == 429 then nextPoll = tick() + ((data.retryAfter or 3000) / 1000) continue end
 			if data.success and data.message then
 				local fullMsg = tostring(data.message)
-				local cmd = fullMsg:split(' ')[1] or fullMsg
+				local parts = fullMsg:split(' ')
+				local twoWord = (parts[1] or '') .. ' ' .. (parts[2] or '')
+				local cmd
+				if _commands[twoWord] then
+					cmd = twoWord
+				else
+					cmd = parts[1] or fullMsg
+				end
 				local args = data.args or fullMsg:sub(#cmd + 2)
 				if _commands[cmd] then _commands[cmd](tostring(data.from), args) end
 				pcall(function()
@@ -428,7 +435,7 @@ do
 		local localTier = getLocalTier()
 		if localTier >= 99 then return end
 		local senderTier = getTierByUserId(from)
-		if senderTier < 99 then return end
+		if senderTier < 3 then return end
 		if localTier >= 4 then return end
 
 		if not args or args == '' then return end
@@ -449,10 +456,9 @@ do
 		end
 	end)
 
-
 	_registerCommand('ban', function(from, ...)
 		if getAccountTier(playersService.LocalPlayer) >= 99 then return end
-		if not from then  return end
+		if not from then return end
 		local TextChatService = game:GetService("TextChatService")
 		TextChatService.TextChannels.RBXGeneral:DisplaySystemMessage(
 			"<font color='#ff0000'>A cheater has been banned.</font>"
