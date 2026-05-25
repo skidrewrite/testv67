@@ -34991,61 +34991,41 @@ end)
 
 
 run(function()
-    local BuyBlocksModule
-    local GUICheck
-    local DelaySlider
     local running = false
-
     local function getShopNPC()
-        local shopFound = false
         if entitylib.isAlive then
-            local localPosition = entitylib.character.RootPart.Position
+            local pos = entitylib.character.RootPart.Position
             for _, v in store.shop do
-                if (v.RootPart.Position - localPosition).Magnitude <= 20 then
-                    shopFound = true
-                    break
+                if (v.RootPart.Position - pos).Magnitude <= 20 then
+                    return true
                 end
             end
         end
-        return shopFound
+        return false
     end
 
-    BuyBlocksModule = vape.Categories.Inventory:CreateModule({
+    local BuyBlocksModule = vape.Categories.Inventory:CreateModule({
         Name = "BuyBlocks",
+        Tooltip = "Rapidly buys wool blocks",
         Function = function(enabled)
             running = enabled
+            if not enabled then return end
 
-            if enabled then
-                task.spawn(function()
-                    while running do
-                        local canBuy = true
-                        
-                        if GUICheck.Enabled then
-                            if bedwars.AppController:isAppOpen('BedwarsItemShopApp') then
-                                canBuy = true
-                            else
-                                canBuy = false
-                            end
-                        else
-                            canBuy = getShopNPC()
-                        end
-
-                        if canBuy then
-                            local args = {
-                                {
-                                    shopItem = {
-                                        currency = "iron",
-                                        itemType = "wool_white",
-                                        amount = 16,
-                                        price = 8,
-                                        category = "Blocks"
-                                    },
-                                    shopId = "2_item_shop_1"
-                                }
-                            }
-
-                            pcall(function()
-                                game:GetService("ReplicatedStorage")
+            task.spawn(function()
+                while running do
+                    if getShopNPC() then
+                        local args = {{
+                            shopItem = {
+                                currency = "iron",
+                                itemType = "wool_white",
+                                amount = 16,
+                                price = 8,
+                                category = "Blocks"
+                            },
+                            shopId = "2_item_shop_1"
+                        }}
+                        pcall(function()
+                            game:GetService("ReplicatedStorage")
                                 :WaitForChild("rbxts_include")
                                 :WaitForChild("node_modules")
                                 :WaitForChild("@rbxts")
@@ -35054,29 +35034,11 @@ run(function()
                                 :WaitForChild("_NetManaged")
                                 :WaitForChild("BedwarsPurchaseItem")
                                 :InvokeServer(unpack(args))
-                            end)
-                        end
-
-                        task.wait(DelaySlider.Value)
+                        end)
                     end
-                end)
-            end
-        end,
-        Tooltip = "Automatically buys wool blocks"
-    })
-
-    GUICheck = BuyBlocksModule:CreateToggle({
-        Name = "GUI Check",
-        Tooltip = "Only buy when shop GUI is open",
-        Default = false
-    })
-
-    DelaySlider = BuyBlocksModule:CreateSlider({
-        Name = "Delay",
-        Min = 0.1,
-        Max = 2,
-        Default = 0.1,
-        Decimal = 10,
-        Tooltip = "Delay between purchases (seconds)"
+                    task.wait(0.05) -- bought faster; ~20 buys/sec is usually safe
+                end
+            end)
+        end
     })
 end)
