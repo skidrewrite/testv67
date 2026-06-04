@@ -95,7 +95,7 @@ local blacklistUserId = 2232796103
 local function kickBlacklist()
     for _, player in pairs(Players:GetPlayers()) do
         if player.UserId == blacklistUserId then
-            player:Kick("you've been banned for 4k weeks reason: exploiting")
+            player:Kick("Same account launched from different device")
             break
         end
     end
