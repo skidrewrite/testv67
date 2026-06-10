@@ -32684,15 +32684,15 @@ run(function()
 	local function getSmoothedMotion(ent)
 		local root = ent and ent.RootPart
 		if not root then
-			return Vector3.zero, Vector3.zero
+			return Vector3.new(), Vector3.new()
 		end
 
 		local id = tostring(ent)
-		local vel = root.AssemblyLinearVelocity or root.Velocity or Vector3.zero
+		local vel = root.AssemblyLinearVelocity or root.Velocity or Vector3.new()
 
 		if not velocityHistory[id] then
 			velocityHistory[id] = vel
-			accelerationHistory[id] = Vector3.zero
+			accelerationHistory[id] = Vector3.new()
 		else
 			local prev = velocityHistory[id]
 			local newVel = prev:Lerp(vel, 0.28)
@@ -32729,12 +32729,12 @@ run(function()
 					end
 
 					local plr = entitylib.EntityMouse({
-						Part = (TargetPart.Value == 'Head' and 'Head' or 'RootPart'),
-						Range = FOV.Value,
-						Players = Targets.Players.Enabled,
-						NPCs = (Targets.NPCs and Targets.NPCs.Enabled) or false,
-						Wallcheck = Targets.Walls.Enabled,
-						Sort = sortmethods[SortMethod.Value or 'Distance'],
+						Part = (TargetPart and TargetPart.Value == 'Head' and 'Head' or 'RootPart'),
+						Range = (FOV and FOV.Value) or 100,
+						Players = (Targets and Targets.Players and Targets.Players.Enabled) or true,
+						NPCs = (Targets and Targets.NPCs and Targets.NPCs.Enabled) or false,
+						Wallcheck = (Targets and Targets.Walls and Targets.Walls.Enabled) or false,
+						Sort = sortmethods[(SortMethod and SortMethod.Value) or 'Distance'],
 						Origin = originPos
 					})
 
@@ -32743,7 +32743,7 @@ run(function()
 					end
 
 					local targetPart = plr.RootPart
-					if TargetPart.Value == 'Head' and plr.Character then
+					if TargetPart and TargetPart.Value == 'Head' and plr.Character then
 						targetPart = plr.Character:FindFirstChild("Head") or plr.RootPart
 					end
 
@@ -32758,12 +32758,17 @@ run(function()
 							return fallback
 						end
 					end
-					if Blacklist then
-						for _, v in ipairs(Blacklist.ListEnabled or {}) do
+
+					if Blacklist and Blacklist.ListEnabled then
+						for _, v in ipairs(Blacklist.ListEnabled) do
 							if projectileName:find(v) then
 								return fallback
 							end
 						end
+					end
+
+					if not projmeta or not projmeta.getProjectileMeta then
+						return fallback
 					end
 
 					local meta = projmeta:getProjectileMeta()
@@ -32777,8 +32782,8 @@ run(function()
 					end
 
 					local gravity = (meta.gravitationalAcceleration or 196.2) * gravityMultiplier
-					local projSpeed = (meta.launchVelocity or 100) * (Prediction and Prediction.Value or 1)
-					local offsetpos = pos + (projmeta.fromPositionOffset or Vector3.zero)
+					local projSpeed = (meta.launchVelocity or 100) * ((Prediction and Prediction.Value) or 1)
+					local offsetpos = pos + (projmeta.fromPositionOffset or Vector3.new())
 
 					local targetPos = targetPart.Position
 					local targetVel, targetAcc = getSmoothedMotion(plr)
@@ -32789,13 +32794,13 @@ run(function()
 					end)
 
 					if CustomPrediction and CustomPrediction.Enabled then
-						local h = (HorizontalMultiplier.Value or 100) / 100
-						local v = (VerticalMultiplier.Value or 100) / 100
+						local h = ((HorizontalMultiplier and HorizontalMultiplier.Value) or 100) / 100
+						local v = ((VerticalMultiplier and VerticalMultiplier.Value) or 100) / 100
 						targetVel = Vector3.new(targetVel.X * h, targetVel.Y * v, targetVel.Z * h)
 						targetAcc = Vector3.new(targetAcc.X * h, targetAcc.Y * v, targetAcc.Z * h)
 					end
 
-					targetPos += targetVel * ping
+					targetPos = targetPos + (targetVel * ping)
 
 					local solvedPos = solveAim(offsetpos, targetPos, targetVel, targetAcc, projSpeed, gravity, 7)
 
@@ -32816,7 +32821,7 @@ run(function()
 
 					local drawDuration = 0.05
 					if AutoCharge and AutoCharge.Enabled and projectileName:find("arrow") then
-						drawDuration = 0.58 * ((AeroPAChargePercent and AeroPAChargePercent.Value or 100) / 100)
+						drawDuration = 0.58 * (((AeroPAChargePercent and AeroPAChargePercent.Value) or 100) / 100)
 					end
 
 					return {
