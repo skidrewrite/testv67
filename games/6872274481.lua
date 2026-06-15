@@ -31936,36 +31936,42 @@ run(function()
     local Speed
     local running = false
 
+    local purchaseRemote = game:GetService("ReplicatedStorage")
+        :WaitForChild("rbxts_include")
+        :WaitForChild("node_modules")
+        :WaitForChild("@rbxts")
+        :WaitForChild("net")
+        :WaitForChild("out")
+        :WaitForChild("_NetManaged")
+        :WaitForChild("BedwarsPurchaseItem")
+
     local function getShopNPC()
-        local shopFound = false
-        if entitylib.isAlive then
-            local localPosition = entitylib.character.RootPart.Position
-            for _, v in store.shop do
-                if (v.RootPart.Position - localPosition).Magnitude <= 20 then
-                    shopFound = true
-                    break
-                end
+        if not entitylib.isAlive then
+            return false
+        end
+
+        local localPosition = entitylib.character.RootPart.Position
+        for _, v in store.shop do
+            if v.RootPart and (v.RootPart.Position - localPosition).Magnitude <= 20 then
+                return true
             end
         end
-        return shopFound
+        return false
     end
 
     BuyBlocksModule = vape.Categories.Inventory:CreateModule({
         Name = "BuyBlocks",
+        Tooltip = "Spams BedwarsPurchaseItem for wool",
         Function = function(enabled)
             running = enabled
 
             if enabled then
                 task.spawn(function()
                     while running do
-                        local canBuy = true
-                        
+                        local canBuy = false
+
                         if GUICheck.Enabled then
-                            if bedwars.AppController:isAppOpen('BedwarsItemShopApp') then
-                                canBuy = true
-                            else
-                                canBuy = false
-                            end
+                            canBuy = bedwars.AppController:isAppOpen("BedwarsItemShopApp")
                         else
                             canBuy = getShopNPC()
                         end
@@ -31974,37 +31980,28 @@ run(function()
                             local args = {
                                 {
                                     shopItem = {
-                                        currency = "iron",
+                                        disabledInQueue = {"mine_wars"},
                                         itemType = "wool_white",
-                                        amount = 16,
+                                        category = "Blocks",
                                         price = 8,
-                                        category = "Blocks"
+                                        currency = "iron",
+                                        amount = 16
                                     },
-                                    shopId = "2_item_shop_1"
+                                    shopId = "1_item_shop"
                                 }
                             }
 
                             pcall(function()
-                                game:GetService("ReplicatedStorage")
-                                :WaitForChild("rbxts_include")
-                                :WaitForChild("node_modules")
-                                :WaitForChild("@rbxts")
-                                :WaitForChild("net")
-                                :WaitForChild("out")
-                                :WaitForChild("_NetManaged")
-                                :WaitForChild("BedwarsPurchaseItem")
-                                :InvokeServer(unpack(args))
+                                purchaseRemote:InvokeServer(unpack(args))
                             end)
                         end
 
-						local spd = Speed.Value
-						spd = spd <= 0 and 1 or spd
-						task.wait(1 / spd)
+                        local spd = math.max(Speed.Value, 1)
+                        task.wait(1 / spd)
                     end
                 end)
             end
-        end,
-        Tooltip = "Automatically buys wool blocks"
+        end
     })
 
     GUICheck = BuyBlocksModule:CreateToggle({
@@ -32018,7 +32015,7 @@ run(function()
         Min = 1,
         Max = 20,
         Default = 10,
-        Tooltip = "Buys per second (higher = faster)"
+        Tooltip = "Buys per second"
     })
 end)
 
