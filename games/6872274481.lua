@@ -34494,8 +34494,8 @@ run(function()
 	local ACheck
 	local VisualiserRange
 	local HRTR = {
-		[1] = 0.042,
-		[2] = 0.0042,
+		[1] = 0.012,
+		[2] = 0.0012,
 	}
 	local ClosetMode
 	local AttackMode
@@ -34517,6 +34517,7 @@ run(function()
 	local CurrentSwingTICK = 0
 	local originalLastAttack, originalLastSwingServerTime
 	local originalSwordEffectKnit, originalScytheKnit
+	local customHitTimes = {}
 	local function restoreSwordState()
 		CURRENT_LEVEL_FROZEN = 0
 		store.KillauraTarget = nil
@@ -34525,6 +34526,7 @@ run(function()
 		LastAuraTarget = nil
 		AfterSwingDone = false
 		CurrentSwingTICK = 0
+		table.clear(customHitTimes)
 		if bedwars.SwordController then
 			if originalLastAttack ~= nil then
 				bedwars.SwordController.lastAttack = originalLastAttack
@@ -34632,16 +34634,19 @@ run(function()
 		end
 	end
 
-	local function canHitWithCustomReg()
+	local function canHitWithCustomReg(entityInstance)
 		if not HitRegOption.Enabled then
 			return true
 		end
 		local currentTime = tick()
-		local delayBetweenHits = (10 / HR.Value) * 0.98
-		if HR.Value >= 36 then
+		local hitRate = math.max(HR.Value, 1)
+		local delayBetweenHits = math.max((1 / hitRate) * 0.72, 0.004)
+		if hitRate >= 60 then
 			return true
 		end
-		if currentTime - lastCustomHitTime >= delayBetweenHits then
+		local key = entityInstance or 'global'
+		if currentTime - (customHitTimes[key] or 0) >= delayBetweenHits then
+			customHitTimes[key] = currentTime
 			lastCustomHitTime = currentTime
 			return true
 		end
@@ -34651,7 +34656,7 @@ run(function()
 
 	local function OptimizedAttackData(attackTable)
         if not AttackRemote then return end
-        if not canHitWithCustomReg() then return end
+        if not canHitWithCustomReg(attackTable.entityInstance) then return end
 		local CanAttackAC = bedwars.SwordController:getTargetInRegion(AttackRange.Value * 3, 0)
 		if not ACheck.Enabled then
 			CanAttackAC = true
@@ -34903,8 +34908,9 @@ run(function()
                                     if (tick() - CurrentSwingTICK) < (swingSpeed * 0.7) then 
                                         continue 
                                     end
-                                    local timeSinceLastSwing = tick() - CurrentSwingTICK * (1.98 / (meta.sword.respectAttackSpeedForEffects and meta.sword.attackSpeed + math.max(ChargeTime.Value, 0.08)))
-                                    local requiredDelay = math.max(swingSpeed * 0.8, 0.1) 
+                                    local attackSpeed = meta.sword.respectAttackSpeedForEffects and meta.sword.attackSpeed or math.max(ChargeTime.Value, 0.08)
+                                    local timeSinceLastSwing = (tick() - CurrentSwingTICK) * (1.98 / attackSpeed)
+                                    local requiredDelay = math.max(swingSpeed * 0.45, 0.035) 
                                     if timeSinceLastSwing < requiredDelay then 
                                         continue 
                                     end
@@ -35114,7 +35120,7 @@ run(function()
 					else
 						tme = 0
 					end
-					task.wait(1 / UpdateRate.Value - (tme))
+					task.wait(math.max(1 / UpdateRate.Value - tme, 0.004))
 				until not Killaura.Enabled
 			else
 				restoreSwordState()
@@ -35153,30 +35159,28 @@ run(function()
 	HR = Killaura:CreateSlider({
 		Name = 'Hit Registration',
 		Min = 1,
-		Max = 36,
-		Default = 36,
+		Max = 60,
+		Default = 60,
 		Darker = true,
 		Function = function(val)
 			local function RegMath(sliderValue)
-				local minValue1 = 0.022
-				local maxValue1 = 0.025
+				local minValue1 = 0.012
+				local maxValue1 = 0.018
 
-				local minValue2 = 0.0022
-				local maxValue2 = 0.0025
+				local minValue2 = 0.0012
+				local maxValue2 = 0.0018
 
-				local steps = 52
+				local steps = 59
 
-				local value1 = minValue1 + ((sliderValue - 1) * ((maxValue1 - minValue1) / steps * 0.98))
-				local value2 = minValue2 + ((sliderValue - 1) * ((maxValue2 - minValue2) / steps * 0.98))
+				local value1 = maxValue1 - ((sliderValue - 1) * ((maxValue1 - minValue1) / steps))
+				local value2 = maxValue2 - ((sliderValue - 1) * ((maxValue2 - minValue2) / steps))
 
 				return math.abs(value1), math.abs(value2)
 			end
 
-			if Killaura.Enabled then
-				local v1,v2 = RegMath(val)
-				HRTR[1] = v1
-				HRTR[2] = v2
-			end
+			local v1,v2 = RegMath(val)
+			HRTR[1] = v1
+			HRTR[2] = v2
 		end
 	})
 	HitRegOption = Killaura:CreateToggle({
@@ -35539,7 +35543,7 @@ run(function()
 	})
 	Limit = Killaura:CreateToggle({
 		Name = 'Limit to items',
-		Function = function(callback)
+		Function = function(callback)a
 			if inputService.TouchEnabled and Killaura.Enabled then
 				pcall(function()
 					lplr.PlayerGui.MobileUI['2'].Visible = callback
