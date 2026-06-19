@@ -45043,3 +45043,272 @@ run(function()
 		Tooltip = 'Removes local team-upgrade tier and queue locks'
 	})
 end)
+
+run(function()
+	local RankedCoach
+	local UpdateRate
+	local NotifyDelay
+	local FightRange
+	local HelpRange
+	local ResourceWarn
+	local PearlCalls
+	local lastNotify = 0
+	local lastMessage = ''
+
+	local function getInventoryResources(inv)
+		local resources = {
+			iron = 0,
+			diamond = 0,
+			emerald = 0,
+			gold = 0,
+			pearls = 0,
+			blocks = 0
+		}
+
+		for _, item in pairs((inv or {}).items or {}) do
+			local amount = item.amount or 1
+			if item.itemType == 'iron' or item.itemType == 'diamond' or item.itemType == 'emerald' or item.itemType == 'gold' then
+				resources[item.itemType] += amount
+			elseif item.itemType == 'telepearl' or item.itemType == 'teleport_pearl' then
+				resources.pearls += amount
+			elseif tostring(item.itemType):find('wool', 1, true) then
+				resources.blocks += amount
+			end
+		end
+
+		return resources
+	end
+
+	local function getInventoryPower(inv)
+		local power = 0
+
+		for _, item in pairs((inv or {}).items or {}) do
+			local meta = bedwars.ItemMeta[item.itemType]
+			if meta then
+				if meta.sword then
+					power = math.max(power, meta.sword.damage or 0)
+				end
+				if meta.projectileSource then
+					power += 8
+				end
+			end
+		end
+
+		for _, armor in pairs((inv or {}).armor or {}) do
+			local itemType = type(armor) == 'table' and armor.itemType or armor
+			local meta = itemType and bedwars.ItemMeta[itemType]
+			if meta and meta.armor then
+				power += (meta.armor.damageReductionMultiplier or meta.armor.damageReduction or 0) * 80
+			elseif itemType and itemType ~= 'empty' then
+				power += itemType:find('emerald') and 35 or itemType:find('diamond') and 25 or itemType:find('iron') and 15 or 7
+			end
+		end
+
+		return power
+	end
+
+	local function getLocalInventory()
+		return store.inventory and store.inventory.inventory or {items = {}, armor = {}}
+	end
+
+	local function getEntityInventory(ent)
+		return ent.Player == lplr and getLocalInventory() or store.inventories[ent.Player] or {items = {}, armor = {}}
+	end
+
+	local function getEntityPower(ent)
+		local inv = getEntityInventory(ent)
+		local power = getInventoryPower(inv)
+		if ent.Health and ent.MaxHealth then
+			power += math.clamp(ent.Health / math.max(ent.MaxHealth, 1), 0, 1) * 15
+		end
+		return power
+	end
+
+	local function getTeams()
+		local allies, enemies = {}, {}
+
+		if entitylib.isAlive then
+			table.insert(allies, {
+				Player = lplr,
+				RootPart = entitylib.character.RootPart,
+				Health = lplr.Character and lplr.Character:GetAttribute('Health') or 100,
+				MaxHealth = lplr.Character and lplr.Character:GetAttribute('MaxHealth') or 100
+			})
+		end
+
+		for _, ent in ipairs(entitylib.List) do
+			if ent.RootPart and ent.Player then
+				if isEnemy(ent) then
+					table.insert(enemies, ent)
+				elseif isTeammate(ent.Player) then
+					table.insert(allies, ent)
+				end
+			end
+		end
+
+		return allies, enemies
+	end
+
+	local function countNear(list, pos, range)
+		local count, power, closest, closestDist = 0, 0, nil, math.huge
+		for _, ent in ipairs(list) do
+			if ent.RootPart then
+				local dist = (ent.RootPart.Position - pos).Magnitude
+				if dist <= range then
+					count += 1
+					power += getEntityPower(ent)
+					if dist < closestDist then
+						closest, closestDist = ent, dist
+					end
+				end
+			end
+		end
+		return count, power, closest, closestDist
+	end
+
+	local function getName(ent)
+		return ent and ent.Player and (ent.Player.DisplayName or ent.Player.Name) or 'enemy'
+	end
+
+	local function getAdvice()
+		if not entitylib.isAlive then return end
+
+		local root = entitylib.character.RootPart
+		local localInv = getLocalInventory()
+		local localResources = getInventoryResources(localInv)
+		local localPower = getInventoryPower(localInv)
+		local allies, enemies = getTeams()
+
+		if ResourceWarn.Enabled then
+			local carryingValue = localResources.emerald * 12 + localResources.diamond * 5 + localResources.gold * 2 + math.floor(localResources.iron / 40)
+			local enemyCount = countNear(enemies, root.Position, FightRange.Value)
+			if carryingValue >= 10 and enemyCount > 0 then
+				return 'Bank or back up: you are carrying '..localResources.emerald..' ems / '..localResources.diamond..' diamonds and enemies are close.'
+			end
+		end
+
+		for _, ally in ipairs(allies) do
+			if ally.Player ~= lplr and ally.RootPart then
+				local enemyCount, enemyPower, closestEnemy = countNear(enemies, ally.RootPart.Position, FightRange.Value)
+				if enemyCount >= 2 then
+					local dist = (ally.RootPart.Position - root.Position).Magnitude
+					local supportCount, supportPower = countNear(allies, ally.RootPart.Position, HelpRange.Value)
+					if dist <= HelpRange.Value and (supportPower + localPower) >= enemyPower * 0.85 then
+						return getName(ally)..' is getting jumped by '..enemyCount..'. Help now, you have enough nearby power.'
+					elseif PearlCalls.Enabled and localResources.pearls > 0 and dist <= 90 then
+						return getName(ally)..' is getting jumped. Pearl help if they are still fighting.'
+					else
+						return getName(ally)..' is isolated against '..enemyCount..'. Group before forcing that fight.'
+					end
+				elseif enemyCount == 1 and closestEnemy then
+					local dist = (ally.RootPart.Position - root.Position).Magnitude
+					if dist <= HelpRange.Value and localPower > getEntityPower(closestEnemy) * 0.75 then
+						return getName(ally)..' has a winnable 2v1 on '..getName(closestEnemy)..'. Collapse together.'
+					end
+				end
+			end
+		end
+
+		local enemyCount, enemyPower, closestEnemy, closestDist = countNear(enemies, root.Position, FightRange.Value)
+		local allyCount, allyPower = countNear(allies, root.Position, HelpRange.Value)
+		if closestEnemy and enemyCount > 0 then
+			if enemyPower > (allyPower + localPower) * 1.2 then
+				return 'Do not take this fight. '..getName(closestEnemy)..' side has more gear/players near you.'
+			end
+			if allyCount >= 2 and (allyPower + localPower) > enemyPower * 1.25 then
+				return 'Push now: your team has numbers and gear advantage near '..getName(closestEnemy)..'.'
+			end
+			if closestDist <= 18 and localPower < getEntityPower(closestEnemy) * 0.85 then
+				return 'Kite back. '..getName(closestEnemy)..' has better gear than you.'
+			end
+		end
+
+		if PearlCalls.Enabled and localResources.pearls > 0 then
+			local isolatedEnemy
+			for _, enemy in ipairs(enemies) do
+				local enemySupport = countNear(enemies, enemy.RootPart.Position, 28)
+				local allySupport = countNear(allies, enemy.RootPart.Position, 35)
+				local dist = (enemy.RootPart.Position - root.Position).Magnitude
+				if dist <= 90 and enemySupport <= 1 and allySupport >= 2 then
+					isolatedEnemy = enemy
+					break
+				end
+			end
+			if isolatedEnemy then
+				return 'Pearl collapse possible on '..getName(isolatedEnemy)..'. They are isolated and your team can follow.'
+			end
+		end
+
+		if localResources.diamond >= 4 then
+			return 'You have '..localResources.diamond..' diamonds. Look for an upgrade timing before fighting.'
+		end
+		if localResources.emerald >= 2 and localResources.pearls <= 0 then
+			return 'You have emeralds and no pearl. Buy mobility before the next fight.'
+		end
+
+		return nil
+	end
+
+	RankedCoach = vape.Categories.Utility:CreateModule({
+		Name = 'RankedCoach',
+		Function = function(callback)
+			if callback then
+				repeat
+					local message = getAdvice()
+					if message and (message ~= lastMessage or (tick() - lastNotify) >= NotifyDelay.Value) then
+						lastMessage = message
+						lastNotify = tick()
+						notif('RankedCoach', message, 6)
+					end
+					task.wait(UpdateRate.Value)
+				until not RankedCoach.Enabled
+			else
+				lastMessage = ''
+				lastNotify = 0
+			end
+		end,
+		Tooltip = 'Gives ranked game-sense calls from gear, loot, and positions'
+	})
+
+	UpdateRate = RankedCoach:CreateSlider({
+		Name = 'Update Rate',
+		Min = 0.5,
+		Max = 5,
+		Default = 1,
+		Decimal = 10,
+		Suffix = 's'
+	})
+	NotifyDelay = RankedCoach:CreateSlider({
+		Name = 'Notify Delay',
+		Min = 2,
+		Max = 20,
+		Default = 7,
+		Suffix = 's'
+	})
+	FightRange = RankedCoach:CreateSlider({
+		Name = 'Fight Range',
+		Min = 15,
+		Max = 60,
+		Default = 32,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	HelpRange = RankedCoach:CreateSlider({
+		Name = 'Help Range',
+		Min = 30,
+		Max = 120,
+		Default = 70,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	ResourceWarn = RankedCoach:CreateToggle({
+		Name = 'Resource Calls',
+		Default = true
+	})
+	PearlCalls = RankedCoach:CreateToggle({
+		Name = 'Pearl Calls',
+		Default = true
+	})
+end)
