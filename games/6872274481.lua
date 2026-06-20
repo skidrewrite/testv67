@@ -34470,13 +34470,10 @@ run(function()
 	local AnimationSpeed
 	local AnimationTween
 	local Limit
-	local LegitAura = {}
+	local LegitAura
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
-	local AttackRemote = {FireServer = function() end}
-	task.spawn(function()
-		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
-	end)
+	local AttackRemote = Client:Get('SwordHit')
 
 	local function getAttackData()
 		if Mouse.Enabled then
@@ -34484,16 +34481,16 @@ run(function()
 		end
 
 		if GUI.Enabled then
-			if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return false end
+			--if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return false end
 		end
 
-		local sword = Limit.Enabled and store.hand or store.tools.sword
+		local sword = Limit.Enabled and store.hand or getSword()
 		if not sword or not sword.tool then return false end
 
-		local meta = bedwars.ItemMeta[sword.tool.Name]
-		if Limit.Enabled then
+		local meta = bedwars.ItemMeta[sword.itemType]
+		--[[if Limit.Enabled then
 			if store.hand.toolType ~= 'sword' or bedwars.DaoController.chargingMaid then return false end
-		end
+		end]]
 
 		if LegitAura.Enabled then
 			if (tick() - bedwars.SwordController.lastSwing) > 0.2 then return false end
@@ -34512,23 +34509,12 @@ run(function()
 					end)
 				end
 
-				if Animation.Enabled and not (identifyexecutor and table.find({'Argon', 'Delta'}, ({identifyexecutor()})[1])) then
-					local fake = {
-						Controllers = {
-							ViewmodelController = {
-								isVisible = function()
-									return not Attacking
-								end,
-								playAnimation = function(...)
-									if not Attacking then
-										bedwars.ViewmodelController:playAnimation(select(2, ...))
-									end
-								end
-							}
-						}
-					}
-					debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 6, fake)
-					debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, fake)
+				if Animation.Enabled then
+					Killaura:Clean(gameCamera.Viewmodel.Humanoid.AnimationPlayed:Connect(function(animTrack: AnimationTrack)
+						if (animTrack.Animation.AnimationId == 'rbxassetid://8089691925') and Attacking then
+							animTrack:Stop()
+						end
+					end))
 
 					task.spawn(function()
 						local started = false
@@ -34568,12 +34554,11 @@ run(function()
 					end)
 				end
 
-				local swingCooldown = 0
 				repeat
 					local attacked, sword, meta = {}, getAttackData()
 					Attacking = false
 					store.KillauraTarget = nil
-					if sword then
+					if sword and bedwars.Knit.Controllers.MatchController:getMatchState() == 1 then
 						local plrs = entitylib.AllPosition({
 							Range = SwingRange.Value,
 							Wallcheck = Targets.Walls.Enabled or nil,
@@ -34585,7 +34570,7 @@ run(function()
 						})
 
 						if #plrs > 0 then
-							switchItem(sword.tool, 0)
+							bedwars.switchHand(sword.tool)
 							local selfpos = entitylib.character.RootPart.Position
 							local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
 
@@ -34604,11 +34589,8 @@ run(function()
 									Attacking = true
 									store.KillauraTarget = v
 									if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
-										AnimDelay = tick() + (meta.sword.respectAttackSpeedForEffects and meta.sword.attackSpeed or math.max(ChargeTime.Value, 0.11))
-										bedwars.SwordController:playSwordEffect(meta, false)
-										if meta.displayName:find(' Scythe') then
-											bedwars.ScytheController:playLocalAnimation()
-										end
+										AnimDelay = tick() + (meta.sword.respectAttackSpeedForEffects and meta.sword.attackSpeed or 0.11)
+										bedwars.Knit.Controllers.SwordController:playSwordEffect()
 
 										if vape.ThreadFix then
 											setthreadidentity(8)
@@ -34617,25 +34599,18 @@ run(function()
 								end
 
 								if delta.Magnitude > AttackRange.Value then continue end
-								if delta.Magnitude < 14.4 and (tick() - swingCooldown) < math.max(ChargeTime.Value, 0.02) then continue end
 
 								local actualRoot = v.Character.PrimaryPart
 								if actualRoot then
 									local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 									local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
-									swingCooldown = tick()
-									bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+									bedwars.Knit.Controllers.SwordController.lastAttack = workspace:GetServerTimeNow()
 									store.attackReach = (delta.Magnitude * 100) // 1 / 100
 									store.attackReachUpdate = tick() + 1
 
-									if delta.Magnitude < 14.4 and ChargeTime.Value > 0.11 then
-										AnimDelay = tick()
-									end
-
-									AttackRemote:FireServer({
+									AttackRemote:SendToServer({
 										weapon = sword.tool,
 										chargedAttack = {chargeRatio = 0},
-										lastSwingServerTimeDelta = 0.5,
 										entityInstance = v.Character,
 										validate = {
 											raycast = {
@@ -34669,8 +34644,7 @@ run(function()
 						entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
 					end
 
-					--#attacked > 0 and #attacked * 0.02 or
-					task.wait(1 / UpdateRate.Value)
+					task.wait(#attacked > 0 and #attacked * 0.02 or 1 / UpdateRate.Value)
 				until not Killaura.Enabled
 			else
 				store.KillauraTarget = nil
@@ -34685,8 +34659,7 @@ run(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = true
 					end)
 				end
-				debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 6, bedwars.Knit)
-				debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
+
 				Attacking = false
 				if armC0 then
 					AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
@@ -34711,8 +34684,8 @@ run(function()
 	SwingRange = Killaura:CreateSlider({
 		Name = 'Swing range',
 		Min = 1,
-		Max = 40,
-		Default = 40,
+		Max = 28,
+		Default = 28,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end
@@ -34720,18 +34693,11 @@ run(function()
 	AttackRange = Killaura:CreateSlider({
 		Name = 'Attack range',
 		Min = 1,
-		Max = 30,
-		Default = 14,
+		Max = 28,
+		Default = 28,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end
-	})
-	ChargeTime = Killaura:CreateSlider({
-		Name = 'Swing time',
-		Min = 0,
-		Max = 0.5,
-		Default = 0.42,
-		Decimal = 100
 	})
 	AngleSlider = Killaura:CreateSlider({
 		Name = 'Max angle',
@@ -34740,11 +34706,11 @@ run(function()
 		Default = 360
 	})
 	UpdateRate = Killaura:CreateSlider({
-        Name = 'Update rate',
-        Min = 1,
-        Max = 360,
-        Default = 120,
-        Suffix = 'hz'
+		Name = 'Update rate',
+		Min = 1,
+		Max = 120,
+		Default = 60,
+		Suffix = 'hz'
 	})
 	MaxTargets = Killaura:CreateSlider({
 		Name = 'Max targets',
@@ -34937,140 +34903,10 @@ run(function()
 		end,
 		Tooltip = 'Only attacks when the sword is held'
 	})
-    LegitAura = Killaura:CreateToggle({
-        Name = 'Swing only',
-        Tooltip = 'Only attacks while swinging manually'
-    })
-end)
--- Nerv8 block 30: [Exploits] PlayerData
-
-
-run(function()
-    local TypeData
-    local PlayerData
-    local includeEmptyMatches
-	local Clean
-    PlayerData = vape.Categories.Exploits:CreateModule({
-        Name = "PlayerData",
-        Function = function(callback)
-			if role ~= "owner" and role ~= "coowner" and role ~= "admin" and role ~= "friend" and role ~= "premium"then
-				vape:CreateNotification("Onyx", "You don’t have access to this.", 10, "alert")
-				return
-			end  
-	    	if not callback then return end
-
-            local http = httpService
-            local store = bedwars.Store:getState()
-
-            if TypeData.Value == "important" then
-                local stats = {}
-                local totals = {
-                    TotalWins = 0,
-                    TotalLosses = 0,
-                    TotalMatches = 0,
-                    TotalBedBreaks = 0,
-                    TotalFinalKills = 0
-                }
-
-                local leaderboard = store and store.Leaderboard and store.Leaderboard.queues
-
-                if leaderboard then
-                    for mode, data in pairs(leaderboard) do
-                        local wins = data.wins or 0																
-                        local losses = data.losses or 0
-						local ties = data.ties or 0
-                        local matches = data.matches or (wins + losses + tie)
-                        local winrate = (wins + losses + ties > 0) and ((wins / (wins + losses + ties)) * 100) or 0
-						local earlyleaves = data.earlyLeaves or 0
-                        local bedBreaks = data.bedBreaks or 0
-                        local finalKills = data.finalKills or 0
-
-                        totals.TotalWins += wins
-                        totals.TotalLosses += losses
-                        totals.TotalMatches += matches
-                        totals.TotalBedBreaks += bedBreaks
-                        totals.TotalFinalKills += finalKills
-
-                        if includeEmptyMatches.Value or (wins > 0 or losses > 0 or matches > 0 ) then
-                            stats[mode] = {
-                                Winrate = string.format("%.2f%%", winrate),
-                                Wins = wins,
-                                Losses = losses,
-								Ties = ties,
-                                Matches = matches,
-								EarlyLeaves = earlyleaves,
-                                BedBreaks = bedBreaks,
-                                FinalKills = finalKills
-                            }
-                        end
-                    end
-                end
-
-                local achievements = {}
-                if store and store.Bedwars and store.Bedwars.achievements then
-                    for _, ach in pairs(store.Bedwars.achievements) do
-                        table.insert(achievements, ach)
-                    end
-                elseif leaderboard and leaderboard.bedwars_duels and leaderboard.bedwars_duels.obtainedAchievements then
-                    achievements = leaderboard.bedwars_duels.obtainedAchievements
-                end
-
-                local dataOut = {
-					GameModes = stats,
-                    Totals = totals,
-                    Achievements = achievements
-                }
-				if Clean then
-					local json = http:JSONEncode(dataOut)
-	                json = json:gsub(',"', ',\n    "')
-	                json = json:gsub('{', '{\n    ')
-	                json = json:gsub('}', '\n}')
-	
-	                writefile("newvape/profiles/PlayerData.txt", json)
-	                vape:CreateNotification("PlayerData", "Created PlayerData.txt file at profiles", 10)
-					else
-						local json = dataOut
-						
-                		writefile("newvape/profiles/PlayerData.txt", json)
-                		vape:CreateNotification("PlayerData", "Created PlayerData.txt file at profiles", 10)
-					end
-            elseif TypeData.Value == "full" then
-
-				if Clean then
-					local json = http:JSONEncode(bedwars.Store:getState())
-	                json = json:gsub(',"', ',\n    "')
-	                json = json:gsub('{', '{\n    ')
-	                json = json:gsub('}', '\n}')
-	
-	                writefile("newvape/profiles/PlayerDataJSON.txt", json)
-	                vape:CreateNotification("PlayerData", "Created PlayerData.json file at profiles", 10)
-					else
-						local json = http:JSONEncode(bedwars.Store:getState())
-						
-                		writefile("newvape/profiles/PlayerDataJSON.txt", json)
-                		vape:CreateNotification("PlayerData", "Created PlayerData.json file at profiles", 10)
-					end
-            end
-		PlayerData:Toggle()
-        end,
-        Tooltip = "Creates a file that has your data"
-    })
-
-    TypeData = PlayerData:CreateDropdown({
-        Name = "Type",
-        List = {"important", "full"}
-    })
-
-    includeEmptyMatches = PlayerData:CreateToggle({
-        Name = "EmptyMatches",
-        Default = false,
-        Tooltip = "ONLY FOR IMPORTANT TYPE (adds 0-stats matches to your file)"
-    })
-	Clean = PlayerData:CreateToggle({
-        Name = "Clean",
-        Default = true,
-        Tooltip = "Cleans up the JSON file"
-    })
+	LegitAura = Killaura:CreateToggle({
+		Name = 'Swing only',
+		Tooltip = 'Only attacks while swinging manually'
+	})
 end)
 
 -- Nerv8 block 31: [Exploits] LeaveParty
