@@ -45487,3 +45487,131 @@ local function isFirstPerson()
 	if not (lplr.Character and lplr.Character:FindFirstChild("Head")) then return false end
 	return (lplr.Character.Head.Position - gameCamera.CFrame.Position).Magnitude < 2
 end
+
+
+
+    })
+
+    GUICheck = BuyBlocksModule:CreateToggle({
+        Name = "GUI Check",
+        Tooltip = "Only buy when shop GUI is open",
+        Default = false
+    })
+
+    Speed = BuyBlocksModule:CreateSlider({
+        Name = "Speed",
+        Min = 1,
+        Max = 20,
+        Default = 10,
+        Tooltip = "Buys per second"
+    })
+end)
+
+--// BEGIN NERV8 MERGED MODULES
+-- Merged from Nerv8 6872274481.lua; universal.lua intentionally excluded.
+-- These blocks are appended instead of replacing R12SA's existing modules.
+local role = role or 'owner'
+local oldpred = oldpred or prediction
+local cyanpred = cyanpred or oldpred
+local synpred = synpred or oldpred
+local zikopred = zikopred or oldpred
+local downloadFile = downloadFile or function(filePath, func)
+	filePath = filePath:gsub('^ReVape/', 'newvape/')
+	if isfile and isfile(filePath) then
+		return (func or readfile)(filePath)
+	end
+	error('Missing merged Nerv8 dependency: '..tostring(filePath))
+end
+-- Nerv8 feature block count: 76
+
+
+-- Nerv8 block 2: [Combat] NoClickDelay
+	
+run(function()
+	local old
+	local Delay
+	local NoClickDelay
+	NoClickDelay = vape.Categories.Combat:CreateModule({
+		Name = 'NoClickDelay',
+		Function = function(callback)
+			if callback then
+				old = bedwars.SwordController.isClickingTooFast
+				bedwars.SwordController.isClickingTooFast = function(self)
+				if Delay.Value == 0 then
+					Delay.Value = os.clock()
+				else
+					Delay.Value = Delay.Value
+				end
+				
+					self.lastSwing = Delay.Value
+					return false
+				end
+			else
+				bedwars.SwordController.isClickingTooFast = old
+			end
+		end,
+		Tooltip = 'Remove the CPS cap'
+	})
+	Delay  = NoClickDelay:CreateSlider({
+		Name = "Delay",
+		Min = 0,
+		Max = 1,
+		Decimal = 100,
+	})
+end)
+
+-- Nerv8 block 3: [Combat] NoBowOffset
+
+run(function()
+	local NoBowOffset
+	local savedOffsets = {}
+	local offsetKeys = {'RelX', 'RelY', 'RelZ'}
+
+	local function getBowConstants()
+		local constants = bedwars and bedwars.BowConstantsTable
+		return type(constants) == 'table' and constants or nil
+	end
+
+	local function saveOffsets(constants)
+		for _, key in offsetKeys do
+			if savedOffsets[key] == nil then
+				savedOffsets[key] = constants[key]
+			end
+		end
+	end
+
+	local function zeroOffsets()
+		local constants = getBowConstants()
+		if not constants then return end
+		saveOffsets(constants)
+		for _, key in offsetKeys do
+			if rawget(constants, key) ~= nil then
+				constants[key] = 0
+			end
+		end
+	end
+
+	local function restoreOffsets()
+		local constants = getBowConstants()
+		if not constants then return end
+		for _, key in offsetKeys do
+			if savedOffsets[key] ~= nil then
+				constants[key] = savedOffsets[key]
+			end
+		end
+	end
+
+	NoBowOffset = vape.Categories.Combat:CreateModule({
+		Name = 'NoBowOffset',
+		Function = function(callback)
+			if callback then
+				zeroOffsets()
+				NoBowOffset:Clean(runService.Heartbeat:Connect(zeroOffsets))
+			else
+				restoreOffsets()
+			end
+		end,
+		Tooltip = 'Removes bow and crossbow launch offset'
+	})
+end)
+
