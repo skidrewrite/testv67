@@ -43794,6 +43794,10 @@ run(function()
 	local ServerCheck
 	local ReturnHeight
 	local DropMemory = {}
+	local HeldDrops = {}
+	local lastSafePosition
+	local lastSafeCFrame
+	local holdCounter = 0
 	local lastPickup = 0
 	local grabbing = {}
 
@@ -43809,7 +43813,7 @@ run(function()
 	local function getLowestPoint()
 		local lowest = math.huge
 		for _, v in pairs(store.blocks) do
-			local point = (v.Position.Y - (v.Size.Y / 2)) - ReturnHeight.Value
+			local point = (v.Position.Y - (v.Size.Y / 2)) + ReturnHeight.Value
 			if point < lowest then
 				lowest = point
 			end
@@ -43817,15 +43821,48 @@ run(function()
 		return lowest == math.huge and -100 or lowest
 	end
 
+	local function getDropHoldPosition(index)
+		local base = lastSafePosition
+		if not base and entitylib.isAlive and entitylib.character.RootPart then
+			base = entitylib.character.RootPart.Position
+		end
+		if not base then
+			base = gameCamera.CFrame.Position
+		end
+
+		local row = math.floor((index - 1) / 4)
+		local col = ((index - 1) % 4) - 1.5
+		local offset = Vector3.new(col * 1.25, 2.8 + (row * 0.35), -2)
+		return lastSafeCFrame and (lastSafeCFrame * CFrame.new(offset)).Position or (base + offset)
+	end
+
+	local function updateSafePosition(lowestPoint)
+		if not entitylib.isAlive or not entitylib.character.RootPart then return end
+		local root = entitylib.character.RootPart
+		if root.Position.Y <= lowestPoint - ReturnHeight.Value + 18 then return end
+		if root.AssemblyLinearVelocity.Y < -55 then return end
+
+		lastSafePosition = root.Position
+		lastSafeCFrame = root.CFrame
+	end
+
 	local function rememberDrop(drop)
 		local part = getDropPart(drop)
-		if not part or not entitylib.isAlive then return end
+		if not part then return end
 
-		local root = entitylib.character.RootPart
-		local fromSelf = (part.Position - root.Position).Magnitude <= 18 or (tick() - (drop:GetAttribute('ClientDropTime') or 0)) < 2
+		local fromSelf = (tick() - (drop:GetAttribute('ClientDropTime') or 0)) < 2
+		if not fromSelf and entitylib.isAlive and entitylib.character.RootPart then
+			fromSelf = (part.Position - entitylib.character.RootPart.Position).Magnitude <= 24
+		end
+		if not fromSelf and lastSafePosition then
+			fromSelf = (part.Position - lastSafePosition).Magnitude <= 40
+		end
+
+		holdCounter += 1
 		DropMemory[drop] = {
 			fromSelf = fromSelf,
-			lastSeen = tick()
+			lastSeen = tick(),
+			holdIndex = ((holdCounter - 1) % 16) + 1
 		}
 	end
 
@@ -43917,6 +43954,36 @@ run(function()
 		end)
 	end
 
+	local function holdDrop(drop, part)
+		local memory = DropMemory[drop]
+		if not memory then
+			rememberDrop(drop)
+			memory = DropMemory[drop]
+		end
+		if not memory then return end
+
+		HeldDrops[drop] = true
+		memory.lastSeen = tick()
+		moveDrop(drop, part, getDropHoldPosition(memory.holdIndex or 1))
+	end
+
+	local function deliverHeldDrop(drop, part, root)
+		if not root then return end
+		local target = root.Position + (root.CFrame.LookVector * 2) + Vector3.new(0, 1.5, 0)
+		moveDrop(drop, part, target)
+
+		if firetouchinterest then
+			pcall(function()
+				firetouchinterest(root, part, 0)
+				firetouchinterest(root, part, 1)
+			end)
+		end
+
+		if Pickup.Enabled then
+			requestPickup(drop, part)
+		end
+	end
+
 	VoidDropTP = vape.Categories.Utility:CreateModule({
 		Name = 'VoidDropTP',
 		Function = function(callback)
@@ -43926,6 +43993,8 @@ run(function()
 					rememberDrop(obj)
 				end, function(tab, obj)
 					DropMemory[obj] = nil
+					HeldDrops[obj] = nil
+					grabbing[obj] = nil
 					local ind = table.find(tab, obj)
 					if ind then
 						table.remove(tab, ind)
@@ -43936,37 +44005,55 @@ run(function()
 				if not VoidDropTP.Enabled then return end
 
 				repeat
-					if entitylib.isAlive then
-						local root = entitylib.character.RootPart
-						local lowestPoint = getLowestPoint()
+					local lowestPoint = getLowestPoint()
+					updateSafePosition(lowestPoint)
+					local alive = entitylib.isAlive and entitylib.character.RootPart
+					local root = alive and entitylib.character.RootPart or nil
 
-						for _, drop in pairs(drops) do
-							local part = getDropPart(drop)
-							if not part then continue end
+					for _, drop in pairs(drops) do
+						local part = getDropPart(drop)
+						if not part then continue end
 
-							local memory = DropMemory[drop]
-							if not memory then
-								rememberDrop(drop)
-								memory = DropMemory[drop]
-							end
-
-							local fromSelf = memory and memory.fromSelf
-							if OwnDrops.Enabled and not StealOthers.Enabled and not fromSelf then continue end
-							if part.Position.Y > lowestPoint then continue end
-
-							if StealOthers.Enabled and not fromSelf then
-								moveDrop(drop, part, root.Position + (root.CFrame.LookVector * 2) + Vector3.new(0, 1.5, 0))
-								continue
-							end
-
-							tryPickup(drop, part, root)
+						local memory = DropMemory[drop]
+						if not memory then
+							rememberDrop(drop)
+							memory = DropMemory[drop]
 						end
+
+						local fromSelf = memory and memory.fromSelf
+						if OwnDrops.Enabled and not StealOthers.Enabled and not fromSelf then continue end
+
+						local clientMarked = (drop:GetAttribute('ClientDropTime') or 0) > tick()
+						local fallingWithDrop = root and root.Position.Y <= lowestPoint
+						if part.Position.Y > lowestPoint and not HeldDrops[drop] and not clientMarked and not fallingWithDrop then continue end
+
+						if not alive then
+							holdDrop(drop, part)
+							continue
+						end
+
+						if StealOthers.Enabled and not fromSelf then
+							deliverHeldDrop(drop, part, root)
+							continue
+						end
+
+						if HeldDrops[drop] then
+							deliverHeldDrop(drop, part, root)
+						else
+							holdDrop(drop, part)
+						end
+
+						tryPickup(drop, part, root)
 					end
-					task.wait(0.05)
+					task.wait(0.025)
 				until not VoidDropTP.Enabled
 			else
 				table.clear(DropMemory)
+				table.clear(HeldDrops)
 				table.clear(grabbing)
+				lastSafePosition = nil
+				lastSafeCFrame = nil
+				holdCounter = 0
 				lastPickup = 0
 			end
 		end,
@@ -43996,14 +44083,13 @@ run(function()
 	ReturnHeight = VoidDropTP:CreateSlider({
 		Name = 'Void Height',
 		Min = 20,
-		Max = 100,
-		Default = 50,
+		Max = 9999,
+		Default = 9999,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end
 	})
 end)
-
 run(function()
 	local LootGrabber
 	local Range
