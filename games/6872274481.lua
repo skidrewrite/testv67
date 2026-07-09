@@ -45284,3 +45284,80 @@ run(function()
         Default = true
     })
 end)
+
+-- Item Suspend: freeze your dropped items in the void at Y = -100 and return them to you on disable
+run(function()
+    local ItemSuspend
+    local ReturnOnDisable -- kept implicit behavior (always return), no UI toggle required
+    local VOID_Y = -100
+    local frozenItems = {}
+
+    ItemSuspend = vape.Categories.Utility:CreateModule({
+        Name = 'Item Suspend',
+        Function = function(callback)
+            if callback then
+                local items = collection('ItemDrop', ItemSuspend)
+                repeat
+                    if entitylib.isAlive then
+                        local localPosition = entitylib.character.RootPart.Position
+                        for _, v in items do
+                            if not v or not v.Parent then continue end
+
+                            -- Only consider items that were dropped by this client (ClientDropTime attribute exists)
+                            local clientDropTime = v.GetAttribute and v:GetAttribute('ClientDropTime')
+                            if clientDropTime then
+                                -- If the item fell into the void (or below VOID_Y), freeze it at VOID_Y
+                                if v.Position.Y <= VOID_Y then
+                                    if not v:GetAttribute('FrozenByItemSuspend') then
+                                        pcall(function()
+                                            v.CFrame = CFrame.new(v.Position.X, VOID_Y, v.Position.Z)
+                                            -- zero velocity (AssemblyLinearVelocity preferred)
+                                            if v.AssemblyLinearVelocity ~= nil then
+                                                v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                                            else
+                                                v.Velocity = Vector3.new(0, 0, 0)
+                                            end
+                                            v.Anchored = true
+                                            v:SetAttribute('FrozenByItemSuspend', true)
+                                            frozenItems[v] = true
+                                        end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                until not ItemSuspend.Enabled
+
+                -- Module disabled: teleport frozen items back to the player and unfreeze them
+                local returnPosition = nil
+                if entitylib.isAlive and entitylib.character and entitylib.character.RootPart then
+                    returnPosition = entitylib.character.RootPart.Position
+                end
+
+                for v, _ in pairs(frozenItems) do
+                    if v and v.Parent then
+                        pcall(function()
+                            v.Anchored = false
+                            v:SetAttribute('FrozenByItemSuspend', nil)
+                            if returnPosition then
+                                v.CFrame = CFrame.new(returnPosition - Vector3.new(0, 3, 0))
+                            end
+                            if v.AssemblyLinearVelocity ~= nil then
+                                v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                            else
+                                v.Velocity = Vector3.new(0, 0, 0)
+                            end
+                        end)
+                    end
+                end
+                -- clear table
+                frozenItems = {}
+            end
+        end,
+        Tooltip = 'Freeze your dropped items in the void (Y <= -100) and return them to you when disabled'
+    })
+
+    -- No range or network TP controls: loot will not teleport to you while the module is active
+    ItemSuspend:CreateLabel({ Name = 'Frozen Y', Text = tostring(VOID_Y) })
+end)
