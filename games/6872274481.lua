@@ -12241,6 +12241,10 @@ local function safeIsBreakable(pos)
     return ok and result
 end
 
+-- Breaker with improved bed-defense handling:
+-- Prefer breaking blocks along the player->bed line (cover blocks) before breaking a bed,
+-- preventing the breaker from mining straight through small holes in defenses.
+
 run(function()
 	local Breaker
 	local Range
@@ -12280,6 +12284,10 @@ run(function()
 	local cachedTeammatesTime = 0
 	local breakabilityCache = {}
 	local BREAK_CACHE_TTL = 0.5
+
+	-- Sight cache for line-of-sight checks
+	local sightCache = {}
+	local SIGHT_CACHE_TTL = 0.25
 
 	local function cachedIsBreakable(v)
 		local now = tick()
@@ -12656,19 +12664,139 @@ run(function()
 		return bestYeti
 	end
 
+	-- LOS test with small cache
+	local function hasLineOfSight(part)
+		if not part or not part.Parent then return false end
+
+		local now = tick()
+		local cached = sightCache[part]
+		if cached and (now - cached.t) < SIGHT_CACHE_TTL then
+			return cached.v
+		end
+
+		local hrp = (entitylib and entitylib.character and entitylib.character.RootPart) or (lplr.Character and (lplr.Character:FindFirstChild('HumanoidRootPart') or lplr.Character:FindFirstChild('HumanoidRootPart')))
+		if not hrp then
+			sightCache[part] = {v = true, t = now}
+			return true
+		end
+
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Blacklist
+		local ignoreList = {}
+		if lplr and lplr.Character then
+			table.insert(ignoreList, lplr.Character)
+		end
+		params.FilterDescendantsInstances = ignoreList
+
+		local origin = hrp.Position + Vector3.new(0, 1.5, 0)
+		local size = part.Size
+		local center = part.Position
+		local inset = 0.01
+		local targets = {
+			center,
+			center + Vector3.new(0, size.Y/2 - inset, 0),
+			center + Vector3.new(size.X/2 - inset, 0, 0),
+			center + Vector3.new(-size.X/2 + inset, 0, 0),
+			center + Vector3.new(0, 0, size.Z/2 - inset),
+			center + Vector3.new(0, 0, -size.Z/2 + inset)
+		}
+
+		local visible = false
+		for _, target in ipairs(targets) do
+			local dir = target - origin
+			if dir.Magnitude <= 0 then
+				visible = true
+				break
+			end
+			local rayResult = workspace:Raycast(origin, dir, params)
+			if not rayResult then
+				visible = true
+				break
+			else
+				local hitInst = rayResult.Instance
+				if hitInst == part or hitInst:IsDescendantOf(part) then
+					visible = true
+					break
+				end
+			end
+		end
+
+		sightCache[part] = {v = visible, t = now}
+		return visible
+	end
+
+	-- New: find the first placed (grid) block between player and target part along the player->target line.
+	-- This walks from the bed toward the player in grid steps (3 studs) to prefer breaking the cover block.
+	local function findCoverBlockTowardsPlayer(targetPart, playerPos)
+		if not targetPart or not targetPart.Parent then return nil end
+		local dir = (targetPart.Position - playerPos)
+		local dist = dir.Magnitude
+		if dist <= 0.1 then return nil end
+		dir = dir.Unit
+
+		-- Number of steps outward from bed to check (3 studs per step). Tune as needed.
+		local maxSteps = 4
+		for i = 1, maxSteps do
+			local checkWorld = targetPart.Position - dir * (i * 3)
+			local checkGrid = roundPos(checkWorld)
+			-- skip if location is essentially the player location
+			if (checkGrid - playerPos).Magnitude < 2 then break end
+			local placed = getPlacedBlock(checkGrid)
+			if placed and placed.Parent and placed ~= targetPart then
+				-- ensure it's a proper placed block that is breakable and allowed by checks
+				local ok, canBreak = pcall(bedwars.BlockController.isBlockBreakable, bedwars.BlockController, {blockPosition = placed.Position / 3}, lplr)
+				if ok and canBreak and passesChecks(placed) and cachedIsBreakable(placed) then
+					return placed
+				end
+			end
+		end
+		return nil
+	end
+
 	local function attemptBreak(tab, localPosition, skipBreakCheck)
 		if not tab then return false end
 		if MouseDown and MouseDown.Enabled and not inputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then return false end
 		local best, bestDist = nil, math.huge
 		for _, v in tab do
-			local dist = (v.Position - localPosition).Magnitude
-			if dist >= Range.Value or dist >= bestDist then continue end
-			if not skipBreakCheck and v.Name ~= 'bed' then
-				if not cachedIsBreakable(v) then continue end
+			if not v or not v.Parent then
+				-- skip
+			else
+				local dist = (v.Position - localPosition).Magnitude
+				if dist < Range.Value and dist < bestDist then
+					-- normal breakability check for non-bed unless skipBreakCheck
+					if not skipBreakCheck and v.Name ~= 'bed' then
+						if not cachedIsBreakable(v) then
+							-- skip
+							goto cont1
+						end
+					end
+
+					-- If wall checking enabled and candidate is a bed, prefer breaking the cover block toward the player
+					if WallCheck and WallCheck.Enabled and v.Name == 'bed' then
+						local cover = findCoverBlockTowardsPlayer(v, localPosition)
+						if cover and cover.Parent then
+							local cdist = (cover.Position - localPosition).Magnitude
+							if cdist < bestDist and cdist < Range.Value then
+								best = cover
+								bestDist = cdist
+								goto cont1
+							end
+						end
+						-- otherwise allow bed candidate to be tested further (LOS/passesChecks below)
+					end
+
+					-- Wall check: if enabled, skip blocks not in direct LOS (beds may already have been handled above)
+					if WallCheck and WallCheck.Enabled and not hasLineOfSight(v) then
+						goto cont1
+					end
+
+					if not passesChecks(v) then goto cont1 end
+
+					best = v
+					bestDist = dist
+				end
 			end
-			if not passesChecks(v) then continue end
-			best = v
-			bestDist = dist
+			::cont1::
 		end
 		if not best then return false end
 		return doBreak(best)
@@ -12685,13 +12813,29 @@ run(function()
 				local dist = (v.Position - localPosition).Magnitude
 				if dist < Range.Value and dist < bestDist then
 					if cachedIsBreakable(v) and passesChecks(v) then
-						if true then
-							best = v
-							bestDist = dist
+						-- For beds, prefer cover block toward player
+						if WallCheck and WallCheck.Enabled and v.Name == 'bed' then
+							local cover = findCoverBlockTowardsPlayer(v, localPosition)
+							if cover and cover.Parent then
+								local cdist = (cover.Position - localPosition).Magnitude
+								if cdist < bestDist and cdist < Range.Value then
+									best = cover
+									bestDist = cdist
+									goto cont2
+								end
+							end
 						end
+						-- Wall check
+						if WallCheck and WallCheck.Enabled and not hasLineOfSight(v) then
+							goto cont2
+						end
+
+						best = v
+						bestDist = dist
 					end
 				end
 			end
+			::cont2::
 		end
 		if best then return doBreak(best) end
 		return false
@@ -12737,39 +12881,39 @@ run(function()
 				local trackedSpecial = {tesla_trap={}, beehive={}, pinata={}, carrot={}, melon={}, pumpkin={}, snow_pile={}} 
 				local _trackedNames = {tesla_trap = true, beehive = true, pinata = true, carrot = true, melon = true, pumpkin = true, snow_pile = true}
 
-			local function trackAdd(obj)
-				if not _trackedNames[obj.Name] then return end
-				local t = trackedSpecial[obj.Name]
-				if not t then return end
-				if obj:IsA('BasePart') then
-					table.insert(t, obj)
-				elseif obj:IsA('Model') then
-					local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA('BasePart')
-					if part then table.insert(t, part) end
-				end
-			end
-
-			local function trackRemove(obj)
-				if not _trackedNames[obj.Name] then return end
-				local t = trackedSpecial[obj.Name]
-				if t then
+				local function trackAdd(obj)
+					if not _trackedNames[obj.Name] then return end
+					local t = trackedSpecial[obj.Name]
+					if not t then return end
 					if obj:IsA('BasePart') then
-						local i = table.find(t, obj)
-						if i then table.remove(t, i) end
+						table.insert(t, obj)
 					elseif obj:IsA('Model') then
 						local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA('BasePart')
-						if part then
-							local i = table.find(t, part)
-							if i then table.remove(t, i) end
-						end
+						if part then table.insert(t, part) end
 					end
 				end
-				breakabilityCache[obj] = nil
-			end
 
-			for _, obj in workspace:GetDescendants() do trackAdd(obj) end
-			Breaker:Clean(workspace.DescendantAdded:Connect(trackAdd))
-			Breaker:Clean(workspace.DescendantRemoving:Connect(trackRemove))
+				local function trackRemove(obj)
+					if not _trackedNames[obj.Name] then return end
+					local t = trackedSpecial[obj.Name]
+					if t then
+						if obj:IsA('BasePart') then
+							local i = table.find(t, obj)
+							if i then table.remove(t, i) end
+						elseif obj:IsA('Model') then
+							local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA('BasePart')
+							if part then
+								local i = table.find(t, part)
+								if i then table.remove(t, i) end
+							end
+						end
+					end
+					breakabilityCache[obj] = nil
+				end
+
+				for _, obj in workspace:GetDescendants() do trackAdd(obj) end
+				Breaker:Clean(workspace.DescendantAdded:Connect(trackAdd))
+				Breaker:Clean(workspace.DescendantRemoving:Connect(trackRemove))
 
 				local lockedPathBlock = nil
 				repeat
@@ -12804,6 +12948,25 @@ run(function()
 								if not skip and v.Name ~= 'bed' then
 									if not cachedIsBreakable(v) then continue end
 								end
+
+								-- For beds: prefer cover block toward player even if the bed is visible through a small hole.
+								if WallCheck and WallCheck.Enabled and v.Name == 'bed' then
+									local cover = findCoverBlockTowardsPlayer(v, localPosition)
+									if cover and cover.Parent then
+										local cdist = (cover.Position - localPosition).Magnitude
+										if cdist < bestDist and cdist < Range.Value then
+											best = cover
+											bestDist = cdist
+											continue
+										end
+									end
+								end
+
+								-- Wall check (generic)
+								if WallCheck and WallCheck.Enabled and not hasLineOfSight(v) then
+									continue
+								end
+
 								if not passesChecks(v) then continue end
 								if BreakerAngle and BreakerAngle.Value < 360 then
 									local hrp = entitylib.character and entitylib.character.RootPart
@@ -13024,6 +13187,13 @@ run(function()
 				blockHighlightInstance.Color3 = Color3.fromHSV(hue, sat, val)
 			end
 		end
+	})
+
+	-- WallCheck toggle (enabled by default)
+	WallCheck = Breaker:CreateToggle({
+		Name = 'Wall Check (Line of Sight)',
+		Default = true,
+		Tooltip = 'Skip blocks that are not visible (e.g. enclosed over a bed). Also prefers breaking cover blocks before beds.'
 	})
 
 	BreakerAngle = Breaker:CreateSlider({
