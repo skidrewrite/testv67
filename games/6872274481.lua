@@ -46110,7 +46110,6 @@ Crasher = vape.Categories.Combat:CreateModule({
 run(function()
     local LootTP
     local Height
-    local VelocityMultiplier
     local Network
     local FrozenItems = {}
     
@@ -46121,33 +46120,33 @@ run(function()
                 local items = collection('ItemDrop', LootTP)
                 repeat
                     if entitylib.isAlive then
-                        local localPosition = entitylib.character.RootPart.Position
+                        local localPosition = entitylib.character.HumanoidRootPart.Position
                         
                         for _, v in items do
                             if tick() - (v:GetAttribute('ClientDropTime') or 0) < 2 then continue end
                             
-                            -- Check if item is in the void (below a certain Y position, e.g., -100)
+                            -- Check if item is in the void (below a certain Y position)
                             if v.Position.Y < -100 then
                                 if isnetworkowner(v) and Network.Enabled and entitylib.character.Humanoid.Health > 0 then
-                                    -- Launch item to the sky at specified height
-                                    local skyHeight = Height.Value
-                                    local targetPosition = localPosition + Vector3.new(0, skyHeight, 0)
+                                    -- Freeze item at the specified void height
+                                    local voidHeight = Height.Value
+                                    local targetPosition = Vector3.new(v.Position.X, voidHeight, v.Position.Z)
                                     
-                                    -- Teleport item to the sky position
+                                    -- Teleport item to frozen position
                                     v.CFrame = CFrame.new(targetPosition)
                                     
-                                    -- Freeze the item by setting velocity to zero and disabling physics
+                                    -- Freeze the item by setting velocity to zero
                                     if v:FindFirstChild('BodyVelocity') then
                                         v.BodyVelocity.Velocity = Vector3.new(0, 0, 0)
                                     else
                                         v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                                     end
                                     
-                                    -- Store the item as frozen with its target position
+                                    -- Store the item as frozen
                                     FrozenItems[v] = targetPosition
                                 end
                             elseif FrozenItems[v] then
-                                -- Keep frozen items at their target position
+                                -- Keep frozen items at their frozen position
                                 v.CFrame = CFrame.new(FrozenItems[v])
                                 if v:FindFirstChild('BodyVelocity') then
                                     v.BodyVelocity.Velocity = Vector3.new(0, 0, 0)
@@ -46160,10 +46159,18 @@ run(function()
                     task.wait(0.1)
                 until not LootTP.Enabled
                 
-                -- When disabled, teleport all frozen items back to player
+                -- When disabled, teleport all frozen items to player's humanoid
                 for item, _ in pairs(FrozenItems) do
                     if item and item.Parent then
                         task.spawn(function()
+                            -- Teleport to player humanoid first
+                            local playerHumanoid = entitylib.character.HumanoidRootPart
+                            if playerHumanoid then
+                                item.CFrame = CFrame.new(playerHumanoid.Position)
+                            end
+                            
+                            task.wait(0.05)
+                            
                             bedwars.Client:Get(remotes.PickupItem):CallServerAsync({
                                 itemDrop = item
                             }):andThen(function(suc)
@@ -46186,25 +46193,17 @@ run(function()
                 FrozenItems = {}
             end
         end,
-        Tooltip = 'Freezes dropped items at a specific height and returns them when disabled'
+        Tooltip = 'Freezes dropped items at a specific void height and returns them when disabled'
     })
     
     Height = LootTP:CreateSlider({
         Name = 'Void Height',
-        Min = 50,
-        Max = 500,
-        Default = 200,
+        Min = -500,
+        Max = -50,
+        Default = -200,
         Suffix = function(val) 
             return val == 1 and 'stud' or 'studs' 
         end
-    })
-    
-    VelocityMultiplier = LootTP:CreateSlider({
-        Name = 'Velocity Multiplier',
-        Min = 0.1,
-        Max = 5,
-        Default = 1.5,
-        Decimal = 10
     })
     
     Network = LootTP:CreateToggle({
@@ -46212,6 +46211,7 @@ run(function()
         Default = true
     })
 end)
+
 
 run(function()
     local NoFall
