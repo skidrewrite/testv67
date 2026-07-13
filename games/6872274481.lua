@@ -13653,6 +13653,131 @@ run(function()
 end)
 
 run(function()
+    local LootTP
+    local Height
+    local Network
+    local FrozenItems = {}
+    
+    LootTP = vape.Categories.Utility:CreateModule({
+        Name = 'LootTP',
+        Function = function(callback)
+            if callback then
+                local items = collection('ItemDrop', LootTP)
+                repeat
+                    if entitylib.isAlive then
+                        local localPosition = entitylib.character.HumanoidRootPart.Position
+                        
+                        for _, v in items do
+                            if tick() - (v:GetAttribute('ClientDropTime') or 0) < 2 then continue end
+                            
+                            -- Check if item is in the void (below a certain Y position)
+                            if v.Position.Y < -100 then
+                                if isnetworkowner(v) and Network.Enabled and entitylib.character.Humanoid.Health > 0 then
+                                    -- Freeze item at the specified void height
+                                    local voidHeight = Height.Value
+                                    local targetPosition = Vector3.new(v.Position.X, voidHeight, v.Position.Z)
+                                    
+                                    -- Teleport item to frozen position
+                                    v.CFrame = CFrame.new(targetPosition)
+                                    
+                                    -- Freeze the item by setting velocity to zero
+                                    if v:FindFirstChild('BodyVelocity') then
+                                        v.BodyVelocity.Velocity = Vector3.new(0, 0, 0)
+                                    else
+                                        v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                                    end
+                                    
+                                    -- Store the item as frozen
+                                    FrozenItems[v] = targetPosition
+                                end
+                            elseif FrozenItems[v] and entitylib.character.Humanoid.Health > 0 then
+                                -- Keep frozen items at their frozen position only if alive
+                                v.CFrame = CFrame.new(FrozenItems[v])
+                                if v:FindFirstChild('BodyVelocity') then
+                                    v.BodyVelocity.Velocity = Vector3.new(0, 0, 0)
+                                else
+                                    v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                                end
+                            elseif FrozenItems[v] and entitylib.character.Humanoid.Health <= 0 then
+                                -- If dead, unfreeze items
+                                FrozenItems[v] = nil
+                                if v:FindFirstChild('BodyVelocity') then
+                                    v.BodyVelocity.Velocity = Vector3.new(0, 0, 0)
+                                else
+                                    v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                                end
+                            end
+                        end
+                    else
+                        -- Release all frozen items when dead
+                        for item, _ in pairs(FrozenItems) do
+                            if item and item.Parent then
+                                if item:FindFirstChild('BodyVelocity') then
+                                    item.BodyVelocity.Velocity = Vector3.new(0, 0, 0)
+                                else
+                                    item.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                                end
+                            end
+                        end
+                        FrozenItems = {}
+                    end
+                    task.wait(0.1)
+                until not LootTP.Enabled
+                
+                -- When disabled, teleport all frozen items to player's humanoid
+                for item, _ in pairs(FrozenItems) do
+                    if item and item.Parent then
+                        task.spawn(function()
+                            -- Teleport to player humanoid first
+                            local playerHumanoid = entitylib.character.HumanoidRootPart
+                            if playerHumanoid then
+                                item.CFrame = CFrame.new(playerHumanoid.Position)
+                            end
+                            
+                            task.wait(0.05)
+                            
+                            bedwars.Client:Get(remotes.PickupItem):CallServerAsync({
+                                itemDrop = item
+                            }):andThen(function(suc)
+                                if suc and bedwars.SoundList then
+                                    bedwars.SoundManager:playSound(bedwars.SoundList.PICKUP_ITEM_DROP)
+                                    local sound = bedwars.ItemMeta[item.Name].pickUpOverlaySound
+                                    if sound then
+                                        bedwars.SoundManager:playSound(sound, {
+                                            position = item.Position,
+                                            volumeMultiplier = 0.9
+                                        })
+                                    end
+                                end
+                            end)
+                        end)
+                    end
+                end
+                
+                -- Clear frozen items table
+                FrozenItems = {}
+            end
+        end,
+        Tooltip = 'Freezes dropped items at a specific void height and returns them when disabled'
+    })
+    
+    Height = LootTP:CreateSlider({
+        Name = 'Void Height',
+        Min = -500,
+        Max = -50,
+        Default = -200,
+        Suffix = function(val) 
+            return val == 1 and 'stud' or 'studs' 
+        end
+    })
+    
+    Network = LootTP:CreateToggle({
+        Name = 'Network TP',
+        Default = true
+    })
+end)
+	
+run(function()
 	local AutoHotbar
 	local Mode
 	local Clear
