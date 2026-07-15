@@ -44769,6 +44769,102 @@ local function isFirstPerson()
 end
 
 
+run(function()
+    local ItemSuspend
+    local FreezeDelay
+    local Lifetime
+    local FrozenItems = {}
+    
+    ItemSuspend = vape.Categories.Utility:CreateModule({
+        Name = 'Item Suspend',
+        Function = function(callback)
+            if callback then
+                repeat
+                    if entitylib.isAlive then
+                        local items = collectionService:GetTagged('ItemDrop')
+                        
+                        for _, item in items do
+                            if item and item.Parent then
+                                local dropTime = item:GetAttribute('ClientDropTime') or tick()
+                                local timeSinceDrop = tick() - dropTime
+                                
+                                -- track when item should freeze
+                                if not FrozenItems[item] then
+                                    FrozenItems[item] = {
+                                        droppedAt = dropTime,
+                                        frozenPosition = nil,
+                                        frozenAt = nil
+                                    }
+                                end
+                                
+                                local frozen = FrozenItems[item]
+                                
+                                -- check if freeze delay has elapsed
+                                if timeSinceDrop >= FreezeDelay.Value and not frozen.frozenPosition then
+                                    -- capture current position and freeze
+                                    frozen.frozenPosition = item.Position
+                                    frozen.frozenAt = tick()
+                                end
+                                
+                                -- keep item frozen once delay expires
+                                if frozen.frozenPosition then
+                                    item.Position = frozen.frozenPosition
+                                    
+                                    for _, part in item:GetDescendants() do
+                                        if part:IsA('BasePart') then
+                                            part.Velocity = Vector3.new(0, 0, 0)
+                                            part.RotVelocity = Vector3.new(0, 0, 0)
+                                            part.CanCollide = false
+                                        end
+                                    end
+                                    
+                                    -- unfreeze after lifetime
+                                    if tick() - frozen.frozenAt > Lifetime.Value then
+                                        FrozenItems[item] = nil
+                                    end
+                                end
+                            end
+                        end
+                        
+                        -- cleanup destroyed items
+                        for item, _ in FrozenItems do
+                            if not item or not item.Parent then
+                                FrozenItems[item] = nil
+                            end
+                        end
+                    end
+                    
+                    task.wait(0.05)
+                until not ItemSuspend.Enabled
+                
+                FrozenItems = {}
+            end
+        end,
+        Tooltip = 'Items fall normally then freeze at a set delay'
+    })
+    
+    FreezeDelay = ItemSuspend:CreateSlider({
+        Name = 'Freeze After',
+        Min = 0,
+        Max = 10,
+        Default = 2,
+        Decimal = 10,
+        Suffix = function(val) 
+            return val == 1 and 'second' or 'seconds' 
+        end
+    })
+    
+    Lifetime = ItemSuspend:CreateSlider({
+        Name = 'Stay Frozen',
+        Min = 5,
+        Max = 300,
+        Default = 60,
+        Suffix = function(val)
+            return val == 1 and 'second' or 'seconds'
+        end
+    })
+end)
+
 -- Nerv8 block 3: [Combat] NoBowOffset
 
 run(function()
