@@ -10098,13 +10098,12 @@ run(function()
 	})
 end)
 	
-
 run(function()
     local PickupRange
     local Range
     local Network
     local Lower
-    
+
     PickupRange = vape.Categories.Utility:CreateModule({
         Name = 'Pickup Range',
         Function = function(callback)
@@ -10115,10 +10114,10 @@ run(function()
                         local localPosition = entitylib.character.RootPart.Position
                         for _, v in items do
                             if tick() - (v:GetAttribute('ClientDropTime') or 0) < 2 then continue end
-                            if isnetworkowner(v) and Network.Enabled and entitylib.character.Humanoid.Health > 0 then 
-                                v.CFrame = CFrame.new(localPosition - Vector3.new(0, 3, 0)) 
+                            if isnetworkowner(v) and Network.Enabled and entitylib.character.Humanoid.Health > 0 then
+                                v.CFrame = CFrame.new(localPosition - Vector3.new(0, 3, 0))
                             end
-                            
+
                             if (localPosition - v.Position).Magnitude <= Range.Value then
                                 if Lower.Enabled and (localPosition.Y - v.Position.Y) < (entitylib.character.HipHeight - 1) then continue end
                                 task.spawn(function()
@@ -10151,8 +10150,8 @@ run(function()
         Min = 1,
         Max = 10,
         Default = 10,
-        Suffix = function(val) 
-            return val == 1 and 'stud' or 'studs' 
+        Suffix = function(val)
+            return val == 1 and 'stud' or 'studs'
         end
     })
     Network = PickupRange:CreateToggle({
