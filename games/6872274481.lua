@@ -45239,24 +45239,41 @@ ClientCrasher = vape.Categories.Minigames:CreateModule({
 })
 
 
-local hooked = {}
+-- Anti-crash modules only (Anti-DRACO and Other Anti-Crash)
+-- Place in the same client environment as your vape modules.
 
-local function hookConnection(connection)
-    local func = connection.Function
-    if func and not hooked[func] then
-        local old; old = hookfunction(func, newcclosure(function(...)
+local replicatedStorage = game:GetService("ReplicatedStorage")
+
+-- --------------------
+-- Anti-DRACO (hooks ZAP reliable event connections)
+-- --------------------
+local antiDracoHooked = {} -- map: originalFunc -> oldClosureRef
+
+local function hookDracoConnection(connection)
+    local func = connection and connection.Function
+    if not func or antiDracoHooked[func] then
+        return
+    end
+
+    local ok, err = pcall(function()
+        local old = hookfunction(func, newcclosure(function(...)
             local tab = select(2, ...)
             if typeof(tab) == "table" then
                 local vec = tab[1]
-                if typeof(vec) == "Vector3" then
-                    if vec.Y > 1e7 then
-                        return tab[2]:Destroy()
+                if typeof(vec) == "Vector3" and vec.Y and vec.Y > 1e7 then
+                    local maybeInstance = tab[2]
+                    if typeof(maybeInstance) == "Instance" and maybeInstance.Destroy then
+                        pcall(function() maybeInstance:Destroy() end)
                     end
+                    return -- swallow malicious call
                 end
             end
             return old(...)
         end))
-        hooked[func] = true
+        antiDracoHooked[func] = old
+    end)
+    if not ok then
+        warn("hookDracoConnection failed:", err)
     end
 end
 
@@ -45264,47 +45281,76 @@ AntiDRACO = vape.Categories.Minigames:CreateModule({
     Name = 'Anti-Crash',
     Function = function(callback)
         if callback then
-            for _, connection in getconnections(replicatedStorage:WaitForChild('ZAP'):WaitForChild('ZAP_RELIABLE').OnClientEvent) do
-                hookConnection(connection)
+            local ok, err = pcall(function()
+                local zap = replicatedStorage:WaitForChild('ZAP')
+                local zapReliable = zap:WaitForChild('ZAP_RELIABLE')
+                for _, connection in pairs(getconnections(zapReliable.OnClientEvent)) do
+                    hookDracoConnection(connection)
+                end
+            end)
+            if not ok then
+                warn("AntiDRACO init failed:", err)
             end
         else
-            for func in hooked do
-                restorefunction(func)
+            for func, _ in pairs(antiDracoHooked) do
+                pcall(function() restorefunction(func) end)
             end
-            table.clear(hooked)
+            table.clear(antiDracoHooked)
         end
     end,
     Tooltip = 'Protects against the pearl crasher',
 })
 
-local otherAntiCrashHooked = {}
+-- --------------------
+-- Other Anti-Crash (skips specific abilityUsed payloads)
+-- --------------------
+local otherAntiCrashHooked = {} -- map: originalFunc -> oldClosureRef
+
+local function hookAbilityConnection(connection)
+    local func = connection and connection.Function
+    if not func or otherAntiCrashHooked[func] then
+        return
+    end
+
+    local ok, err = pcall(function()
+        local old = hookfunction(func, newcclosure(function(...)
+            local arg2 = select(2, ...)
+            if arg2 == 'close_black_market' then
+                return -- swallow malicious ability call
+            end
+            return old(...)
+        end))
+        otherAntiCrashHooked[func] = old
+    end)
+    if not ok then
+        warn("hookAbilityConnection failed:", err)
+    end
+end
 
 OtherAntiCrash = vape.Categories.Minigames:CreateModule({
     Name = 'Other Anti Crash',
     Function = function(callback)
-        local abilityUsed = replicatedStorage:WaitForChild('events-@easy-games/game-core:shared/game-core-networking@getEvents.Events'):WaitForChild('abilityUsed')
-        if callback then
-            for _, connection in getconnections(abilityUsed.OnClientEvent) do
-                local func = connection.Function
-                if func and not otherAntiCrashHooked[func] then
-                    local old; old = hookfunction(func, newcclosure(function(...)
-                        if select(2, ...) == 'close_black_market' then
-                            return
-                        end
-                        return old(...)
-                    end))
-                    otherAntiCrashHooked[func] = true
+        local success, err = pcall(function()
+            local eventsRoot = replicatedStorage:WaitForChild('events-@easy-games/game-core:shared/game-core-networking@getEvents.Events')
+            local abilityUsed = eventsRoot:WaitForChild('abilityUsed')
+            if callback then
+                for _, connection in pairs(getconnections(abilityUsed.OnClientEvent)) do
+                    hookAbilityConnection(connection)
                 end
+            else
+                for func, _ in pairs(otherAntiCrashHooked) do
+                    pcall(function() restorefunction(func) end)
+                end
+                table.clear(otherAntiCrashHooked)
             end
-        else
-            for func in otherAntiCrashHooked do
-                restorefunction(func)
-            end
-            table.clear(otherAntiCrashHooked)
+        end)
+        if not success and callback then
+            warn("OtherAntiCrash init failed:", err)
         end
     end,
-    Tooltip = 'protects against wren crasher',
+    Tooltip = 'Protects against wren crasher',
 })
+
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
