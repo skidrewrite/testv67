@@ -45464,143 +45464,200 @@ Crasher1 = vape.Categories.Minigames:CreateModule({
     Tooltip = 'FishFound crasher (studio / testing)',
 })
 
--- AntiFisherCrash: client-side vape module to protect against malicious FishFound payloads
--- Place alongside your other vape modules and enable via vape the same way you do other anti-crash modules.
+-- AntiFishingCrash: lightweight client-side anti-crash for FishFound / fishing-rod related payloads
+-- Place this alongside your other vape modules and enable like your other anti-crash modules.
+-- Goals:
+--  - Immediately swallow obviously-malicious FishFound payloads that crash the client.
+--  - Minimal work per event so it does not introduce lag on the client.
+--  - Hook existing connections and wrap future Connect() calls so new handlers are protected.
 
 local replicatedStorage = game:GetService("ReplicatedStorage")
 
--- Adjust threshold if needed
+-- Tunable threshold. Keep high enough to avoid false positives but low enough to catch crash payloads.
 local NUM_THRESHOLD = 1e7
 
-local hooked = {} -- map: originalFunc -> originalClosure (value stored for bookkeeping)
-local DESTROYED = {} -- remember instances we've attempted to destroy (best-effort)
+-- bookkeeping for restores
+local hookedHandlers = {}      -- map originalFunction -> true (we used hookfunction on it)
+local savedConnects = {}       -- map event -> originalConnectFunction
 
-local function is_malicious_number(n)
+-- fast checks (top-level only, minimal recursion)
+local function is_bad_number(n)
     return type(n) == "number" and (n ~= n or math.abs(n) > NUM_THRESHOLD) -- NaN or huge
 end
 
-local function is_malicious_vector3(v)
+local function is_bad_vector3(v)
     if typeof(v) ~= "Vector3" then return false end
-    return is_malicious_number(v.X) or is_malicious_number(v.Y) or is_malicious_number(v.Z)
+    return is_bad_number(v.X) or is_bad_number(v.Y) or is_bad_number(v.Z)
 end
 
-local function contains_malicious_value(v, seen)
-    seen = seen or {}
-    if v == nil then return false end
-    local t = typeof(v)
+-- Inspect a value quickly for obvious malicious content.
+-- Only checks common spots and shallow structures to remain fast.
+local function looks_malicious(val)
+    local t = typeof(val)
     if t == "number" then
-        return is_malicious_number(v)
+        return is_bad_number(val)
     elseif t == "Vector3" then
-        return is_malicious_vector3(v)
+        return is_bad_vector3(val)
     elseif t == "Instance" then
         return true
     elseif t == "table" then
-        if seen[v] then return false end
-        seen[v] = true
-        for k, val in pairs(v) do
-            if contains_malicious_value(k, seen) or contains_malicious_value(val, seen) then
-                return true
+        -- quick checks of commonly abused/top-level fields for this payload shape
+        -- don't deep-recursive scan to avoid CPU overhead
+        if val.dropData then
+            -- dropData could be a table; check common numeric/vector fields shallowly
+            local dd = val.dropData
+            if type(dd) == "table" then
+                if is_bad_number(dd.weight) then return true end
+                if dd.fishModel and type(dd.fishModel) == "string" and #dd.fishModel > 1000 then return true end
+                -- cheap check: if drops is a table, check first item.amount
+                if type(dd.drops) == "table" and dd.drops[1] and type(dd.drops[1].amount) == "number" and is_bad_number(dd.drops[1].amount) then
+                    return true
+                end
             end
         end
+        -- common attacker pattern: payload is { Vector3, Instance, ... } - check first two entries
+        if val[1] and is_bad_vector3(val[1]) then return true end
+        if val[2] and typeof(val[2]) == "Instance" then return true end
+        -- quick scan of up to 6 entries (cheap)
+        for i = 1, math.min(6, #val) do
+            local v = val[i]
+            local vt = typeof(v)
+            if vt == "Vector3" and is_bad_vector3(v) then return true end
+            if vt == "Instance" then return true end
+            if vt == "number" and is_bad_number(v) then return true end
+        end
+        return false
+    else
         return false
     end
-    return false
 end
 
-local function try_destroy_instances_in_value(v, seen)
-    seen = seen or {}
-    local t = typeof(v)
-    if t == "Instance" then
-        if not DESTROYED[v] then
-            pcall(function() v:Destroy() end)
-            DESTROYED[v] = true
-        end
-    elseif t == "table" then
-        if seen[v] then return end
-        seen[v] = true
-        for _, val in pairs(v) do
-            try_destroy_instances_in_value(val, seen)
-        end
-    end
-end
-
+-- Hook a single connection (wrap its function). Very lightweight wrapper:
+-- Inspect only top-level arg(s) and immediately return (swallow) on suspicion.
 local function hookConnection(connection)
     if not connection then return end
     local func = connection.Function
-    if not func or hooked[func] then return end
+    if not func or hookedHandlers[func] then return end
 
     local ok, err = pcall(function()
         local old = hookfunction(func, newcclosure(function(...)
-            -- inspect all args passed to the handler
-            local args = {...}
-            for i = 1, #args do
-                if contains_malicious_value(args[i]) then
-                    -- neutralize instances (best-effort) and swallow the call to avoid crash
-                    pcall(function() try_destroy_instances_in_value(args[i]) end)
-                    return
-                end
+            -- quick check: test first argument, then second if needed
+            local a1 = select(1, ...)
+            if a1 ~= nil and looks_malicious(a1) then
+                return -- swallow suspicious event
             end
-            -- safe: call original
+            local a2 = select(2, ...)
+            if a2 ~= nil and looks_malicious(a2) then
+                return -- swallow suspicious event
+            end
+            -- safe: call original handler unchanged
             return old(...)
         end))
-        -- store original (old) for bookkeeping/restore if desired
-        hooked[func] = true
+        if ok then
+            hookedHandlers[func] = true
+        end
     end)
-
     if not ok then
-        warn("AntiFisherCrash: failed to hook connection:", err)
+        warn("AntiFishingCrash: failed to hook connection:", err)
     end
 end
 
-AntiFisherCrash = vape.Categories.Minigames:CreateModule({
-    Name = "AntiFisherCrash",
+-- Wrap future Connect() calls on the event so newly added handlers are protected.
+local function hookConnectMethod(event)
+    if not event or not event.OnClientEvent then return end
+    if savedConnects[event] then return end
+
+    local connectFn = event.OnClientEvent.Connect
+    if not connectFn then return end
+
+    local ok, err = pcall(function()
+        local oldConnect = hookfunction(connectFn, newcclosure(function(self, func)
+            -- wrap the provided function with a lightweight guard
+            local wrapped = function(...)
+                local a1 = select(1, ...)
+                if a1 ~= nil and looks_malicious(a1) then
+                    return
+                end
+                local a2 = select(2, ...)
+                if a2 ~= nil and looks_malicious(a2) then
+                    return
+                end
+                return func(...) -- call original handler
+            end
+            -- call the original Connect with our wrapped handler
+            return oldConnect(self, wrapped)
+        end))
+        savedConnects[event] = oldConnect
+    end)
+    if not ok then
+        warn("AntiFishingCrash: failed to hook Connect():", err)
+    end
+end
+
+-- Hook all current connections for an event (fast, single pass)
+local function hookAllForEvent(event)
+    if not event or not event.OnClientEvent then return end
+    if not getconnections then
+        warn("AntiFishingCrash: getconnections not available; cannot hook existing handlers.")
+        return
+    end
+    for _, conn in pairs(getconnections(event.OnClientEvent)) do
+        pcall(hookConnection, conn)
+    end
+    pcall(hookConnectMethod, event)
+end
+
+-- Locate FishFound RemoteEvent (prefer the RBXTS-managed path then fallback to recursive find)
+local function findFishEvent()
+    local ok, nodeEvent = pcall(function()
+        return replicatedStorage:WaitForChild("rbxts_include")
+            :WaitForChild("node_modules")
+            :WaitForChild("@rbxts")
+            :WaitForChild("net")
+            :WaitForChild("out")
+            :WaitForChild("_NetManaged")
+            :WaitForChild("FishFound")
+    end)
+    if ok and nodeEvent and nodeEvent:IsA("RemoteEvent") then
+        return nodeEvent
+    end
+    return replicatedStorage:FindFirstChild("FishFound", true)
+end
+
+-- Create the vape module
+AntiFishingCrash = vape.Categories.Minigames:CreateModule({
+    Name = "AntiFishingCrash",
     Function = function(callback)
         if callback then
             local ok, err = pcall(function()
-                -- Try the common rbxts-managed path first, otherwise find recursively
-                local event
-                local success, nodeEvent = pcall(function()
-                    return replicatedStorage:WaitForChild("rbxts_include")
-                        :WaitForChild("node_modules")
-                        :WaitForChild("@rbxts")
-                        :WaitForChild("net")
-                        :WaitForChild("out")
-                        :WaitForChild("_NetManaged")
-                        :WaitForChild("FishFound")
-                end)
-                if success and nodeEvent and nodeEvent:IsA("RemoteEvent") then
-                    event = nodeEvent
-                else
-                    event = replicatedStorage:FindFirstChild("FishFound", true)
-                end
-
+                local event = findFishEvent()
                 if not event or not event:IsA("RemoteEvent") then
-                    warn("AntiFisherCrash: Could not locate FishFound RemoteEvent.")
+                    warn("AntiFishingCrash: FishFound RemoteEvent not found.")
                     return
                 end
-
-                if not getconnections then
-                    warn("AntiFisherCrash: getconnections not available in this environment; cannot hook handlers.")
-                    return
-                end
-
-                for _, conn in pairs(getconnections(event.OnClientEvent)) do
-                    pcall(hookConnection, conn)
-                end
+                hookAllForEvent(event)
             end)
             if not ok then
-                warn("AntiFisherCrash init failed:", err)
+                warn("AntiFishingCrash init failed:", err)
             end
         else
-            -- restore hooked functions
-            for func, _ in pairs(hooked) do
+            -- restore hooked handlers and Connect methods
+            for func, _ in pairs(hookedHandlers) do
+                pcall(function() restorefunction(func) end)
+            end
+            table.clear(hookedHandlers)
+
+            for event, oldConnect in pairs(savedConnects) do
                 pcall(function()
-                    restorefunction(func)
+                    -- restore by re-hooking current Connect to oldConnect
+                    local cur = event.OnClientEvent.Connect
+                    if cur then
+                        pcall(function() hookfunction(cur, oldConnect) end)
+                    end
                 end)
             end
-            table.clear(hooked)
-            table.clear(DESTROYED)
+            table.clear(savedConnects)
         end
     end,
-    Tooltip = "Protects against malicious FishFound payloads (client-side)",
+    Tooltip = "Lightweight anti-crash for fishing rod / FishFound payloads (client-side)",
 })
