@@ -45239,41 +45239,24 @@ ClientCrasher = vape.Categories.Minigames:CreateModule({
 })
 
 
--- Anti-crash modules only (Anti-DRACO and Other Anti-Crash)
--- Place in the same client environment as your vape modules.
+local hooked = {}
 
-local replicatedStorage = game:GetService("ReplicatedStorage")
-
--- --------------------
--- Anti-DRACO (hooks ZAP reliable event connections)
--- --------------------
-local antiDracoHooked = {} -- map: originalFunc -> oldClosureRef
-
-local function hookDracoConnection(connection)
-    local func = connection and connection.Function
-    if not func or antiDracoHooked[func] then
-        return
-    end
-
-    local ok, err = pcall(function()
-        local old = hookfunction(func, newcclosure(function(...)
+local function hookConnection(connection)
+    local func = connection.Function
+    if func and not hooked[func] then
+        local old; old = hookfunction(func, newcclosure(function(...)
             local tab = select(2, ...)
             if typeof(tab) == "table" then
                 local vec = tab[1]
-                if typeof(vec) == "Vector3" and vec.Y and vec.Y > 1e7 then
-                    local maybeInstance = tab[2]
-                    if typeof(maybeInstance) == "Instance" and maybeInstance.Destroy then
-                        pcall(function() maybeInstance:Destroy() end)
+                if typeof(vec) == "Vector3" then
+                    if vec.Y > 1e7 then
+                        return tab[2]:Destroy()
                     end
-                    return -- swallow malicious call
                 end
             end
             return old(...)
         end))
-        antiDracoHooked[func] = old
-    end)
-    if not ok then
-        warn("hookDracoConnection failed:", err)
+        hooked[func] = true
     end
 end
 
@@ -45281,76 +45264,47 @@ AntiDRACO = vape.Categories.Minigames:CreateModule({
     Name = 'Anti-Crash',
     Function = function(callback)
         if callback then
-            local ok, err = pcall(function()
-                local zap = replicatedStorage:WaitForChild('ZAP')
-                local zapReliable = zap:WaitForChild('ZAP_RELIABLE')
-                for _, connection in pairs(getconnections(zapReliable.OnClientEvent)) do
-                    hookDracoConnection(connection)
-                end
-            end)
-            if not ok then
-                warn("AntiDRACO init failed:", err)
+            for _, connection in getconnections(replicatedStorage:WaitForChild('ZAP'):WaitForChild('ZAP_RELIABLE').OnClientEvent) do
+                hookConnection(connection)
             end
         else
-            for func, _ in pairs(antiDracoHooked) do
-                pcall(function() restorefunction(func) end)
+            for func in hooked do
+                restorefunction(func)
             end
-            table.clear(antiDracoHooked)
+            table.clear(hooked)
         end
     end,
     Tooltip = 'Protects against the pearl crasher',
 })
 
--- --------------------
--- Other Anti-Crash (skips specific abilityUsed payloads)
--- --------------------
-local otherAntiCrashHooked = {} -- map: originalFunc -> oldClosureRef
-
-local function hookAbilityConnection(connection)
-    local func = connection and connection.Function
-    if not func or otherAntiCrashHooked[func] then
-        return
-    end
-
-    local ok, err = pcall(function()
-        local old = hookfunction(func, newcclosure(function(...)
-            local arg2 = select(2, ...)
-            if arg2 == 'close_black_market' then
-                return -- swallow malicious ability call
-            end
-            return old(...)
-        end))
-        otherAntiCrashHooked[func] = old
-    end)
-    if not ok then
-        warn("hookAbilityConnection failed:", err)
-    end
-end
+local otherAntiCrashHooked = {}
 
 OtherAntiCrash = vape.Categories.Minigames:CreateModule({
     Name = 'Other Anti Crash',
     Function = function(callback)
-        local success, err = pcall(function()
-            local eventsRoot = replicatedStorage:WaitForChild('events-@easy-games/game-core:shared/game-core-networking@getEvents.Events')
-            local abilityUsed = eventsRoot:WaitForChild('abilityUsed')
-            if callback then
-                for _, connection in pairs(getconnections(abilityUsed.OnClientEvent)) do
-                    hookAbilityConnection(connection)
+        local abilityUsed = replicatedStorage:WaitForChild('events-@easy-games/game-core:shared/game-core-networking@getEvents.Events'):WaitForChild('abilityUsed')
+        if callback then
+            for _, connection in getconnections(abilityUsed.OnClientEvent) do
+                local func = connection.Function
+                if func and not otherAntiCrashHooked[func] then
+                    local old; old = hookfunction(func, newcclosure(function(...)
+                        if select(2, ...) == 'close_black_market' then
+                            return
+                        end
+                        return old(...)
+                    end))
+                    otherAntiCrashHooked[func] = true
                 end
-            else
-                for func, _ in pairs(otherAntiCrashHooked) do
-                    pcall(function() restorefunction(func) end)
-                end
-                table.clear(otherAntiCrashHooked)
             end
-        end)
-        if not success and callback then
-            warn("OtherAntiCrash init failed:", err)
+        else
+            for func in otherAntiCrashHooked do
+                restorefunction(func)
+            end
+            table.clear(otherAntiCrashHooked)
         end
     end,
-    Tooltip = 'Protects against wren crasher',
+    Tooltip = 'protects against wren crasher',
 })
-
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -45508,4 +45462,134 @@ Crasher1 = vape.Categories.Minigames:CreateModule({
         end
     end,
     Tooltip = 'FishFound crasher (studio / testing)',
+})
+
+	-- AntiFisherCrash: standalone anti-crash module for FishFound client event
+-- Place this alongside your other vape modules.
+
+local replicatedStorage = game:GetService("ReplicatedStorage")
+
+local hooked = {} -- map: originalFunction -> oldClosure
+local DESTROY_ATTEMPTED = {}
+
+local function is_large_number(n)
+    return type(n) == "number" and (n ~= n or math.abs(n) > 1e7) -- NaN or extremely large
+end
+
+local function contains_malicious_value(value)
+    local t = typeof(value)
+    if t == "number" then
+        return is_large_number(value)
+    elseif t == "Vector3" then
+        return math.abs(value.X) > 1e7 or math.abs(value.Y) > 1e7 or math.abs(value.Z) > 1e7
+    elseif t == "Instance" then
+        return true
+    elseif t == "table" then
+        for k, v in pairs(value) do
+            if contains_malicious_value(k) or contains_malicious_value(v) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function try_destroy_instances_in_table(t)
+    if typeof(t) ~= "table" then return end
+    for _, v in pairs(t) do
+        local vt = typeof(v)
+        if vt == "Instance" then
+            if not DESTROY_ATTEMPTED[v] then
+                pcall(function() v:Destroy() end)
+                DESTROY_ATTEMPTED[v] = true
+            end
+        elseif vt == "table" then
+            try_destroy_instances_in_table(v)
+        end
+    end
+end
+
+local function hookConnection(connection)
+    local func = connection and connection.Function
+    if not func or hooked[func] then return end
+
+    local ok, err = pcall(function()
+        local old = hookfunction(func, newcclosure(function(...)
+            -- try common argument positions for payload (OnClientEvent handlers vary)
+            local payload = select(1, ...)
+            if typeof(payload) ~= "table" then
+                payload = select(2, ...) or payload
+            end
+
+            if typeof(payload) == "table" then
+                -- quick detect: any instance or huge numeric/vec fields
+                if contains_malicious_value(payload) then
+                    -- attempt to neutralize instance references found
+                    pcall(function() try_destroy_instances_in_table(payload) end)
+                    -- swallow the call to prevent crash propagation
+                    return
+                end
+            end
+
+            return old(...)
+        end))
+        hooked[func] = old
+    end)
+
+    if not ok then
+        warn("AntiFisherCrash hook failed:", err)
+    end
+end
+
+AntiFisherCrash = vape.Categories.Minigames:CreateModule({
+    Name = "AntiFisherCrash",
+    Function = function(callback)
+        if callback then
+            local ok, err = pcall(function()
+                -- prefer the exact rbxts path used by your game if present, otherwise search recursively
+                local event
+                local success, nodeEvent = pcall(function()
+                    return replicatedStorage:WaitForChild("rbxts_include")
+                        :WaitForChild("node_modules")
+                        :WaitForChild("@rbxts")
+                        :WaitForChild("net")
+                        :WaitForChild("out")
+                        :WaitForChild("_NetManaged")
+                        :WaitForChild("FishFound")
+                end)
+                if success and nodeEvent and nodeEvent:IsA("RemoteEvent") then
+                    event = nodeEvent
+                else
+                    event = replicatedStorage:FindFirstChild("FishFound", true)
+                end
+
+                if not event or not event:IsA("RemoteEvent") then
+                    warn("AntiFisherCrash: Could not find FishFound RemoteEvent.")
+                    return
+                end
+
+                -- iterate current connections and hook them
+                if getconnections then
+                    for _, conn in pairs(getconnections(event.OnClientEvent)) do
+                        pcall(hookConnection, conn)
+                    end
+                else
+                    warn("AntiFisherCrash: getconnections not available in this environment.")
+                end
+            end)
+            if not ok then
+                warn("AntiFisherCrash init failed:", err)
+            end
+        else
+            -- restore hooked functions
+            for func, old in pairs(hooked) do
+                pcall(function()
+                    restorefunction(func)
+                end)
+            end
+            table.clear(hooked)
+            table.clear(DESTROY_ATTEMPTED)
+        end
+    end,
+    Tooltip = "Protects clients from malicious FishFound payloads",
 })
