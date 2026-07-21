@@ -27397,36 +27397,31 @@ run(function()
 	local FrameBuffer
 	local Latency
 	local Rate
-	local running = false
 	
-	local fflagNames = {
-		'DFIntDebugDefaultTargetWorldStepsPerFrame',
-		'DFIntMaxMissedWorldStepsRemembered',
-		'DFIntWorldStepsOffsetAdjustRate',
-		'DFIntDebugSendDistInSteps',
-		'DFIntWorldStepMax',
-		'DFIntWarpFactor'
+	local defaultFFlags = {
+		DFIntDebugDefaultTargetWorldStepsPerFrame = nil,
+		DFIntMaxMissedWorldStepsRemembered = nil,
+		DFIntWorldStepsOffsetAdjustRate = nil,
+		DFIntDebugSendDistInSteps = nil,
+		DFIntWorldStepMax = nil,
+		DFIntWarpFactor = nil
 	}
-	local defaultFFlags = {}
 	
 	local function captureDefaults()
-		if type(getfflag) ~= 'function' then return end
-		
-		for _, name in fflagNames do
-			if defaultFFlags[name] == nil then
-				local suc, val = pcall(function()
-					return getfflag(name)
-				end)
-				if suc then
-					defaultFFlags[name] = val
-				end
+		for name, _ in pairs(defaultFFlags) do
+			local suc, val = pcall(function()
+				return getfflag(name)
+			end)
+			if suc then
+				defaultFFlags[name] = val
 			end
 		end
 	end
+	captureDefaults()
 	
 	local function restoreFFlags()
 		for name, val in pairs(defaultFFlags) do
-			if val ~= nil then
+			if val then
 				pcall(function()
 					setfflag(name, val)
 				end)
@@ -27435,8 +27430,6 @@ run(function()
 	end
 	
 	local function applyFFlags(latencyMs, rate)
-		if type(setfflag) ~= 'function' then return false end
-		
 		rate = math.max(rate, 1)
 		local latency = latencyMs
 		if latency <= 1 then
@@ -27455,34 +27448,16 @@ run(function()
 		pcall(function() setfflag('DFIntDebugSendDistInSteps', str) end)
 		pcall(function() setfflag('DFIntWorldStepMax', str) end)
 		pcall(function() setfflag('DFIntWarpFactor', str2) end)
-		return true
 	end
 	
 	FrameBuffer = vape.Categories.Blatant:CreateModule({
 		Name = 'FrameBuffer',
 		Function = function(callback)
 			if callback then
-				if type(setfflag) ~= 'function' then
-					vape:CreateNotification('Onyx', 'Your current executor does not support setfflag', 6, 'warning')
-					FrameBuffer:Toggle(false)
-					return
-				end
-				
-				captureDefaults()
-				if running then return end
-				running = true
-				
-				task.spawn(function()
-					repeat
-						applyFFlags(Latency.Value, Rate.Value)
-						task.wait(1 / math.max(Rate.Value, 1))
-					until not FrameBuffer.Enabled
-					
-					running = false
-					restoreFFlags()
-				end)
-			else
-				running = false
+				repeat
+					applyFFlags(Latency.Value, Rate.Value)
+					task.wait(1 / math.max(Rate.Value, 1))
+				until not FrameBuffer.Enabled
 				
 				restoreFFlags()
 			end
@@ -28258,6 +28233,7 @@ run(function()
 	local SilentAura
 	local ExtendedRange
 	local ExtendedRangeSlider
+	local WallCheck
 	local silentAttackRemote
 	local lastHitTime = 0
 	local BASE_RANGE = 13.8
@@ -28338,6 +28314,7 @@ run(function()
 			if not ent.Health or ent.Health <= 0 then continue end
 			local dist = (ent.RootPart.Position - selfpos).Magnitude
 			if dist <= maxRange then
+				if WallCheck and WallCheck.Enabled and entitylib.Wallcheck(selfpos, ent.RootPart.Position, true) then continue end
 				table.insert(targets, {ent = ent, dist = dist})
 			end
 		end
@@ -28403,6 +28380,11 @@ run(function()
 				until not SilentAura.Enabled
 			end)
 		end
+	})
+
+	WallCheck = SilentAura:CreateToggle({
+		Name = 'Wall Check',
+		Tooltip = 'Stops SilentAura from attacking targets behind walls.'
 	})
 
 	ExtendedRange = SilentAura:CreateToggle({
