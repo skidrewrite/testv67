@@ -27397,31 +27397,36 @@ run(function()
 	local FrameBuffer
 	local Latency
 	local Rate
+	local running = false
 	
-	local defaultFFlags = {
-		DFIntDebugDefaultTargetWorldStepsPerFrame = nil,
-		DFIntMaxMissedWorldStepsRemembered = nil,
-		DFIntWorldStepsOffsetAdjustRate = nil,
-		DFIntDebugSendDistInSteps = nil,
-		DFIntWorldStepMax = nil,
-		DFIntWarpFactor = nil
+	local fflagNames = {
+		'DFIntDebugDefaultTargetWorldStepsPerFrame',
+		'DFIntMaxMissedWorldStepsRemembered',
+		'DFIntWorldStepsOffsetAdjustRate',
+		'DFIntDebugSendDistInSteps',
+		'DFIntWorldStepMax',
+		'DFIntWarpFactor'
 	}
+	local defaultFFlags = {}
 	
 	local function captureDefaults()
-		for name, _ in pairs(defaultFFlags) do
-			local suc, val = pcall(function()
-				return getfflag(name)
-			end)
-			if suc then
-				defaultFFlags[name] = val
+		if type(getfflag) ~= 'function' then return end
+		
+		for _, name in fflagNames do
+			if defaultFFlags[name] == nil then
+				local suc, val = pcall(function()
+					return getfflag(name)
+				end)
+				if suc then
+					defaultFFlags[name] = val
+				end
 			end
 		end
 	end
-	captureDefaults()
 	
 	local function restoreFFlags()
 		for name, val in pairs(defaultFFlags) do
-			if val then
+			if val ~= nil then
 				pcall(function()
 					setfflag(name, val)
 				end)
@@ -27430,6 +27435,8 @@ run(function()
 	end
 	
 	local function applyFFlags(latencyMs, rate)
+		if type(setfflag) ~= 'function' then return false end
+		
 		rate = math.max(rate, 1)
 		local latency = latencyMs
 		if latency <= 1 then
@@ -27448,16 +27455,34 @@ run(function()
 		pcall(function() setfflag('DFIntDebugSendDistInSteps', str) end)
 		pcall(function() setfflag('DFIntWorldStepMax', str) end)
 		pcall(function() setfflag('DFIntWarpFactor', str2) end)
+		return true
 	end
 	
 	FrameBuffer = vape.Categories.Blatant:CreateModule({
 		Name = 'FrameBuffer',
 		Function = function(callback)
 			if callback then
-				repeat
-					applyFFlags(Latency.Value, Rate.Value)
-					task.wait(1 / math.max(Rate.Value, 1))
-				until not FrameBuffer.Enabled
+				if type(setfflag) ~= 'function' then
+					vape:CreateNotification('Onyx', 'Your current executor does not support setfflag', 6, 'warning')
+					FrameBuffer:Toggle(false)
+					return
+				end
+				
+				captureDefaults()
+				if running then return end
+				running = true
+				
+				task.spawn(function()
+					repeat
+						applyFFlags(Latency.Value, Rate.Value)
+						task.wait(1 / math.max(Rate.Value, 1))
+					until not FrameBuffer.Enabled
+					
+					running = false
+					restoreFFlags()
+				end)
+			else
+				running = false
 				
 				restoreFFlags()
 			end
