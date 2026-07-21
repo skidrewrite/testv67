@@ -45141,13 +45141,43 @@ run(function()
         return false
     end
 
-    local function isBedVisible(bed)
+    local kdFaces = {
+        Vector3.new(3, 0, 0),
+        Vector3.new(-3, 0, 0),
+        Vector3.new(0, 3, 0),
+        Vector3.new(0, -3, 0),
+        Vector3.new(0, 0, 3),
+        Vector3.new(0, 0, -3)
+    }
+
+    local function getBedHitInfo(bed)
         local handler = bedwars.BlockController:getHandlerRegistry():getHandler(bed.Name)
         local positions = handler and handler:getContainedPositions(bed) or {bed.Position / 3}
         for _, gridPos in positions do
-            if isVisible(gridPos * 3) then return true end
+            local worldPos = gridPos * 3
+            for _, face in kdFaces do
+                local neighbor = getPlacedBlock(worldPos + face)
+                if not neighbor or neighbor == bed then
+                    local normal = face.Unit
+                    local facePoint = worldPos + (normal * 1.5)
+                    if isVisible(facePoint) then
+                        return {
+                            gridPos = gridPos,
+                            hitPosition = facePoint,
+                            hitNormal = normal
+                        }
+                    end
+                end
+            end
+
+            if isVisible(worldPos) then
+                return {
+                    gridPos = gridPos,
+                    hitPosition = worldPos,
+                    hitNormal = Vector3.FromNormalId(Enum.NormalId.Top)
+                }
+            end
         end
-        return false
     end
 
     local function eligible(block)
@@ -45277,10 +45307,10 @@ run(function()
         end
     end
 
-    local function strike(block)
+    local function strike(block, hitInfo)
         if lplr:GetAttribute('DenyBlockBreak') or not entitylib.isAlive or InfiniteFly.Enabled then return false end
 
-        local gridPos = bedwars.BlockController:getBlockPosition(block.Position)
+        local gridPos = hitInfo and hitInfo.gridPos or bedwars.BlockController:getBlockPosition(block.Position)
         equipFor(block)
 
         local curHP = readHP(block, gridPos)
@@ -45293,20 +45323,22 @@ run(function()
             hp.max = maxHP
         end
 
-        local dir = entitylib.character.RootPart.Position - block.Position
-        local ax, ay, az = math.abs(dir.X), math.abs(dir.Y), math.abs(dir.Z)
-        local hitNormal
-        if ay >= ax and ay >= az then
-            hitNormal = Vector3.new(0, dir.Y > 0 and 1 or -1, 0)
-        elseif ax >= az then
-            hitNormal = Vector3.new(dir.X > 0 and 1 or -1, 0, 0)
-        else
-            hitNormal = Vector3.new(0, 0, dir.Z > 0 and 1 or -1)
+        local hitNormal = hitInfo and hitInfo.hitNormal
+        if not hitNormal then
+            local dir = entitylib.character.RootPart.Position - block.Position
+            local ax, ay, az = math.abs(dir.X), math.abs(dir.Y), math.abs(dir.Z)
+            if ay >= ax and ay >= az then
+                hitNormal = Vector3.new(0, dir.Y > 0 and 1 or -1, 0)
+            elseif ax >= az then
+                hitNormal = Vector3.new(dir.X > 0 and 1 or -1, 0, 0)
+            else
+                hitNormal = Vector3.new(0, 0, dir.Z > 0 and 1 or -1)
+            end
         end
 
         bedwars.ClientDamageBlock:Get('DamageBlock'):CallServerAsync({
             blockRef = {blockPosition = gridPos},
-            hitPosition = block.Position + hitNormal * 1.5,
+            hitPosition = hitInfo and hitInfo.hitPosition or block.Position + hitNormal * 1.5,
             hitNormal = hitNormal
         }):andThen(function(result)
             if not result then return end
@@ -45593,7 +45625,8 @@ run(function()
 
                     bedGlow.Adornee = bestBed
 
-                    local bedVis = isBedVisible(bestBed)
+                    local bedHitInfo = getBedHitInfo(bestBed)
+                    local bedVis = bedHitInfo ~= nil
                     if bedVis and not lastBedVis then
                         store.damageBlockFail = 0
                     end
@@ -45603,19 +45636,23 @@ run(function()
                         dbg('[KD] bed=' .. bestBed.Name .. ' dist=' .. math.floor(dist) .. ' visible=' .. tostring(bedVis) .. ' failCD=' .. tostring(store.damageBlockFail > tick()))
                     end
 
-                    if bedVis and store.damageBlockFail <= tick() then
+                    if bedVis then
                         store._routePositions = nil
                         store._routeAnchor = nil
                         store._lockedDefenseBlock = nil
                         targetGlow.Adornee = bestBed
                         if PathOverlay.Enabled then clearPath() end
-                        strike(bestBed)
-                        if DebugMode and DebugMode.Enabled then dbg('[KD] strike bed (visible)') end
+                        if store.damageBlockFail <= tick() then
+                            strike(bestBed, bedHitInfo)
+                            if DebugMode and DebugMode.Enabled then dbg('[KD] strike bed (visible)') end
+                        elseif DebugMode and DebugMode.Enabled then
+                            dbg('[KD] visible bed retry cooldown')
+                        end
                         task.wait(QuickBreak.Enabled and 0 or 0.25)
                         continue
                     end
 
-                    if BreakerFallback and BreakerFallback.Enabled and bedVis then
+                    if BreakerFallback and BreakerFallback.Enabled and store.damageBlockFail > tick() then
                         if not ItemLimit.Enabled or (store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name] and bedwars.ItemMeta[store.hand.tool.Name].breakBlock) then
                             targetGlow.Adornee = bestBed
                             if PathOverlay.Enabled then clearPath() end
@@ -45713,7 +45750,7 @@ run(function()
                         end
                     elseif bedVis then
                         targetGlow.Adornee = bestBed
-                        strike(bestBed)
+                        strike(bestBed, bedHitInfo)
                         if DebugMode and DebugMode.Enabled then dbg('[KD] strike bed (no defense found)') end
                         task.wait(QuickBreak.Enabled and 0 or 0.25)
                         continue
