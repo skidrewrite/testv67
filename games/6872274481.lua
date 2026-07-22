@@ -2175,353 +2175,89 @@ local function getScaffoldBlockForModule(limitItem)
 	return nil
 end
 
-run(function()
-	local AimAssist
-	local Targets
-	local Sort
-	local AimSpeed
-	local Smoothness
-	local SmoothnessToggle
-	local Distance
-	local AngleSlider
-	local StrafeMultiplier
-	local KillauraTarget
-	local ClickAim
-	local ShopCheck
-	local AimPart
-	local ViewMode
-	local PriorityMode
-	local ShakeToggle
-	local ShakeAmount
-	local WorkWithProjectiles
-	local lockedTarget = nil
-	local rng = Random.new()
+local AimAssist
+local Targets
+local Sort
+local AimSpeed
+local Distance
+local AngleSlider
+local StrafeIncrease
+local KillauraTarget
+local ClickAim
 
-	local function getSmoothedSpeed(speedVal, smoothVal, dt)
-		local baseSpeed = 0.01
-		local multiplier = 1.35
-		local speed = baseSpeed * (multiplier ^ speedVal)
-		local smoothScale = 1 - ((smoothVal - 1) / 9) * 0.92
-		return math.min(speed, 0.95) * smoothScale
-	end
+AimAssist = vape.Categories.Combat:CreateModule({
+	Name = 'AimAssist',
+	Function = function(callback)
+		if callback then
+			AimAssist:Clean(runService.Heartbeat:Connect(function(dt)
+				if entitylib.isAlive and store.hand.toolType == 'sword' and ((not ClickAim.Enabled) or (tick() - bedwars.SwordController.lastSwing) < 0.4) then
+					local ent = not KillauraTarget.Enabled and entitylib.EntityPosition({
+						Range = Distance.Value,
+						Part = 'RootPart',
+						Wallcheck = Targets.Walls.Enabled,
+						Players = Targets.Players.Enabled,
+						NPCs = Targets.NPCs.Enabled,
+						Sort = sortmethods[Sort.Value]
+					}) or store.KillauraTarget
 
-	local function getClosestPartToCursor(character)
-		local mousePos = inputService:GetMouseLocation()
-		local mouseRay = gameCamera:ViewportPointToRay(mousePos.X, mousePos.Y, 0)
-		local bestAngle = math.huge
-		local bestPart = nil
-		local partNames = {
-			'HumanoidRootPart', 'Head', 'UpperTorso', 'LowerTorso',
-			'LeftUpperArm', 'RightUpperArm', 'LeftLowerArm', 'RightLowerArm',
-			'LeftUpperLeg', 'RightUpperLeg', 'LeftLowerLeg', 'RightLowerLeg',
-			'LeftFoot', 'RightFoot', 'LeftHand', 'RightHand'
-		}
-		for _, partName in partNames do
-			local part = character:FindFirstChild(partName)
-			if part then
-				local dirToPart = (part.Position - mouseRay.Origin).Unit
-				local angle = math.acos(math.clamp(mouseRay.Direction:Dot(dirToPart), -1, 1))
-				if angle < bestAngle then
-					bestAngle = angle
-					bestPart = part
-				end
-			end
-		end
-		return bestPart
-	end
-
-	local function isTargetStillValid(ent)
-		if not ent or not ent.RootPart then return false end
-		if not ent.Character or not ent.Character.Parent then return false end
-		if (ent.Health or 0) <= 0 then return false end
-		local dist = (ent.RootPart.Position - entitylib.character.RootPart.Position).Magnitude
-		if dist > Distance.Value then return false end
-		if getAccountTier(ent.Player) >= 1 and getAccountTier(lplr) == 0 then return false end
-		return true
-	end
-
-	AimAssist = vape.Categories.Combat:CreateModule({
-		Name = 'AimAssist',
-		Function = function(callback)
-			if callback then
-				AimAssist:Clean(runService.Heartbeat:Connect(function(dt)
-					if not entitylib.isAlive then
-						lockedTarget = nil
-						return
-					end
-
-					local validWeapon = store.hand.toolType == 'sword'
-					if WorkWithProjectiles and WorkWithProjectiles.Enabled then
-						validWeapon = validWeapon or isHoldingBowCrossbow()
-					end
-					if not validWeapon then
-						lockedTarget = nil
-						return
-					end
-
-					if ClickAim and ClickAim.Enabled then
-						local sc = bedwars.SwordController
-						if not sc or not sc.lastAttack or (workspace:GetServerTimeNow() - sc.lastAttack) >= 0.4 then
-							lockedTarget = nil
-							return
-						end
-					end
-
-					local currentView = isFirstPerson()
-					if ViewMode.Value == "First Person" and not currentView then return end
-					if ViewMode.Value == "Third Person" and currentView then return end
-
-					if ShopCheck and ShopCheck.Enabled then
-						if lplr.PlayerGui and lplr.PlayerGui:FindFirstChild("ItemShop") then
-							lockedTarget = nil
-							return
-						end
-					end
-
-					local ent = nil
-
-					if PriorityMode and PriorityMode.Enabled and lockedTarget then
-						if isTargetStillValid(lockedTarget) then
-							ent = lockedTarget
-						else
-							lockedTarget = nil
-						end
-					end
-
-					if not ent then
-						if KillauraTarget and KillauraTarget.Enabled and store.KillauraTarget then
-							local ka = store.KillauraTarget
-							local validType = (ka.Player and Targets.Players.Enabled) or (ka.NPC and Targets.NPCs.Enabled)
-							local dist = ka.RootPart and (ka.RootPart.Position - entitylib.character.RootPart.Position).Magnitude
-							local validDist = dist and dist <= Distance.Value
-							if validType and validDist then
-								ent = ka
-							end
-						end
-						if not ent then
-							ent = entitylib.EntityPosition({
-								Range = Distance.Value,
-								Part = 'RootPart',
-								Wallcheck = Targets.Walls.Enabled,
-								Players = Targets.Players.Enabled,
-								NPCs = Targets.NPCs.Enabled,
-								Sort = sortmethods[Sort.Value]
-							})
-						end
-						if PriorityMode and PriorityMode.Enabled and ent then
-							lockedTarget = ent
-						end
-					end
-
-					if not ent or not ent.RootPart or (ent.Health or 0) <= 0 then
-						if PriorityMode and PriorityMode.Enabled then lockedTarget = nil end
-						return
-					end
-
-					do
+					if ent then
 						local delta = (ent.RootPart.Position - entitylib.character.RootPart.Position)
 						local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
-						local flatDelta = delta * Vector3.new(1, 0, 1)
-						if flatDelta.Magnitude > 0.001 then
-							local angle = math.acos(math.clamp(localfacing:Dot(flatDelta.Unit), -1, 1))
-							if angle >= (math.rad(AngleSlider.Value) / 2) then
-								if PriorityMode and PriorityMode.Enabled then lockedTarget = nil end
-								return
-							end
-						else
-							return
-						end
+						local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+						if angle >= (math.rad(AngleSlider.Value) / 2) then return end
+						targetinfo.Targets[ent] = tick() + 1
+						gameCamera.CFrame = gameCamera.CFrame:Lerp(CFrame.lookAt(gameCamera.CFrame.p, ent.RootPart.Position), (AimSpeed.Value + (StrafeIncrease.Enabled and (inputService:IsKeyDown(Enum.KeyCode.A) or inputService:IsKeyDown(Enum.KeyCode.D)) and 10 or 0)) * dt)
 					end
-
-					targetinfo.Targets[ent] = tick() + 1
-
-					local aimPosition = ent.RootPart.Position
-					if AimPart.Value == "Head" then
-						local head = ent.Character and ent.Character:FindFirstChild("Head")
-						if head then aimPosition = head.Position end
-					elseif AimPart.Value == "Closest" then
-						if ent.Character then
-							local closest = getClosestPartToCursor(ent.Character)
-							if closest then aimPosition = closest.Position end
-						end
-					else
-						local torso = ent.Character and (ent.Character:FindFirstChild("UpperTorso") or ent.Character:FindFirstChild("Torso"))
-						if torso then aimPosition = torso.Position end
-					end
-
-					if ShakeToggle and ShakeToggle.Enabled and ShakeAmount.Value > 0 then
-						local shakeIntensity = ShakeAmount.Value / 10
-						aimPosition = aimPosition + Vector3.new(
-							(rng:NextNumber() - 0.5) * shakeIntensity,
-							(rng:NextNumber() - 0.5) * shakeIntensity,
-							(rng:NextNumber() - 0.5) * shakeIntensity
-						)
-					end
-
-					local finalSpeed
-					if SmoothnessToggle and SmoothnessToggle.Enabled then
-						local speed = getSmoothedSpeed(AimSpeed.Value, Smoothness.Value, dt)
-						if StrafeMultiplier and StrafeMultiplier.Enabled then
-							if inputService:IsKeyDown(Enum.KeyCode.A) or inputService:IsKeyDown(Enum.KeyCode.D) then
-								speed = speed * 1.15
-							end
-						end
-						finalSpeed = speed
-						local targetCFrame = CFrame.lookAt(gameCamera.CFrame.p, aimPosition)
-						gameCamera.CFrame = gameCamera.CFrame:Lerp(targetCFrame, math.min(finalSpeed * (dt * 60), 0.95))
-					else
-						local speed = AimSpeed.Value
-						if StrafeMultiplier and StrafeMultiplier.Enabled then
-							if inputService:IsKeyDown(Enum.KeyCode.A) or inputService:IsKeyDown(Enum.KeyCode.D) then
-								speed = speed * 1.15
-							end
-						end
-						local targetCFrame = CFrame.lookAt(gameCamera.CFrame.p, aimPosition)
-						gameCamera.CFrame = gameCamera.CFrame:Lerp(targetCFrame, speed * dt)
-					end
-				end))
-			else
-				lockedTarget = nil
-			end
-		end,
-		Tooltip = 'Aim assist with smooth target tracking'
-	})
-
-	Targets = AimAssist:CreateTargets({
-		Players = true,
-		Walls = true
-	})
-
-	local methods = {'Damage', 'Distance'}
-	for i in sortmethods do
-		if not table.find(methods, i) then
-			table.insert(methods, i)
+				end
+			end))
 		end
+	end,
+	Tooltip = 'Smoothly aims to closest valid target with sword'
+})
+Targets = AimAssist:CreateTargets({
+	Players = true,
+	Walls = true
+})
+local methods = {'Damage', 'Distance'}
+for i in sortmethods do
+	if not table.find(methods, i) then
+		table.insert(methods, i)
 	end
+end
+Sort = AimAssist:CreateDropdown({
+	Name = 'Target Mode',
+	List = methods
+})
+AimSpeed = AimAssist:CreateSlider({
+	Name = 'Aim Speed',
+	Min = 1,
+	Max = 20,
+	Default = 6
+})
+Distance = AimAssist:CreateSlider({
+	Name = 'Distance',
+	Min = 1,
+	Max = 30,
+	Default = 30,
+	Suffx = function(val)
+		return val == 1 and 'stud' or 'studs'
+	end
+})
+AngleSlider = AimAssist:CreateSlider({
+	Name = 'Max angle',
+	Min = 1,
+	Max = 360,
+	Default = 70
+})
+ClickAim = AimAssist:CreateToggle({
+	Name = 'Click Aim',
+	Default = true
+})
+KillauraTarget = AimAssist:CreateToggle({
+	Name = 'Use killaura target'
+})
+StrafeIncrease = AimAssist:CreateToggle({Name = 'Strafe increase'})
 
-	Sort = AimAssist:CreateDropdown({
-		Name = 'Target Mode',
-		List = methods,
-		Tooltip = 'How to prioritize targets'
-	})
-
-	AimPart = AimAssist:CreateDropdown({
-		Name = 'Aim Part',
-		List = {'Torso', 'Head', 'Closest'},
-		Default = 'Torso'
-	})
-
-	ViewMode = AimAssist:CreateDropdown({
-		Name = 'View Mode',
-		List = {'First Person', 'Third Person', 'Both'},
-		Default = 'Both',
-		Tooltip = 'Only aim in first person, third person, or always'
-	})
-
-	AimSpeed = AimAssist:CreateSlider({
-		Name = 'Aim Speed',
-		Min = 1,
-		Max = 20,
-		Default = 6,
-		Tooltip = 'How fast aim assist moves toward the target'
-	})
-
-	Distance = AimAssist:CreateSlider({
-		Name = 'Distance',
-		Min = 1,
-		Max = 30,
-		Default = 25,
-		Suffix = function(val)
-			return val == 1 and 'stud' or 'studs'
-		end
-	})
-
-	AngleSlider = AimAssist:CreateSlider({
-		Name = 'Max Angle',
-		Min = 1,
-		Max = 360,
-		Default = 60,
-		Tooltip = 'FOV cone for target acquisition'
-	})
-
-	SmoothnessToggle = AimAssist:CreateToggle({
-		Name = 'Smoothness',
-		Default = false,
-		Tooltip = 'Makes aim assist feel more legit',
-		Function = function(callback)
-			if Smoothness then Smoothness.Object.Visible = callback end
-		end
-	})
-
-	Smoothness = AimAssist:CreateSlider({
-		Name = 'Smoothness Amount',
-		Min = 1,
-		Max = 10,
-		Default = 5,
-		Tooltip = 'Higher = smoother and more legit.',
-		Visible = false
-	})
-
-	PriorityMode = AimAssist:CreateToggle({
-		Name = 'Priority Mode',
-		Default = false,
-		Tooltip = 'Locks onto one target until they leave range or angle. Ignores new targets.'
-	})
-
-	ClickAim = AimAssist:CreateToggle({
-		Name = 'Click Aim',
-		Default = true,
-		Tooltip = 'Only aims when attacking'
-	})
-
-	KillauraTarget = AimAssist:CreateToggle({
-		Name = 'Use Killaura Target',
-		Tooltip = 'Follow the same target as Killaura'
-	})
-
-	StrafeMultiplier = AimAssist:CreateToggle({
-		Name = 'Strafe Boost',
-		Tooltip = 'Increases aim speed slightly when strafing'
-	})
-
-	ShakeToggle = AimAssist:CreateToggle({
-		Name = 'Shake',
-		Default = false,
-		Tooltip = 'Adds slight jitter to aim to look more human',
-		Function = function(callback)
-			if ShakeAmount then ShakeAmount.Object.Visible = callback end
-		end
-	})
-
-	ShakeAmount = AimAssist:CreateSlider({
-		Name = 'Shake Amount',
-		Min = 1,
-		Max = 10,
-		Default = 3,
-		Visible = false
-	})
-
-	ShopCheck = AimAssist:CreateToggle({
-		Name = 'Shop Check',
-		Default = false,
-		Tooltip = 'Disables aim assist when the shop is open'
-	})
-
-	WorkWithProjectiles = AimAssist:CreateToggle({
-		Name = 'Work With Projectiles',
-		Default = false,
-		Tooltip = 'Also activates when holding bows or crossbows'
-	})
-
-	task.defer(function()
-		if Smoothness and Smoothness.Object then
-			Smoothness.Object.Visible = SmoothnessToggle and SmoothnessToggle.Enabled or false
-		end
-		if ShakeAmount and ShakeAmount.Object then
-			ShakeAmount.Object.Visible = false
-		end
-	end)
-end)
 	
 run(function()
     if isMobile then
