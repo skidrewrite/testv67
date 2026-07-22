@@ -34289,6 +34289,7 @@ run(function()
 	local AttackRange
 	local ChargeTime
 	local UpdateRate
+	local HitRate
 	local AngleSlider
 	local MaxTargets
 	local Mouse
@@ -34310,10 +34311,45 @@ run(function()
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local originalSwordEffectKnit, originalScytheKnit
-	local AttackRemote = {FireServer = function() end}
+	local AttackRemote = {SendToServer = function() end}
+	local lastHitTime = 0
 	task.spawn(function()
-		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
+		AttackRemote = bedwars.Client:Get(remotes.AttackEntity)
 	end)
+
+	local function canHitWithHitreg()
+		local currentTime = tick()
+		local hitreg = (HitRate and HitRate.Value or 34) + (math.random(-3, 3) / 10)
+		local delayBetweenHits = 10 / math.max(hitreg, 1)
+		if currentTime - lastHitTime >= delayBetweenHits then
+			lastHitTime = currentTime
+			return true
+		end
+		return false
+	end
+
+	local function fireKillauraAttack(attackData)
+		if not AttackRemote then return end
+
+		local selfpos = attackData.validate.selfPosition.value
+		local targetpos = attackData.validate.targetPosition.value
+		local actualDistance = (selfpos - targetpos).Magnitude
+		if actualDistance > 14.4 and actualDistance <= 30 then
+			local direction = (targetpos - selfpos).Unit
+			local moveDistance = math.min(actualDistance - 14.3, 8)
+			attackData.validate.selfPosition.value = selfpos + (direction * moveDistance)
+			local pullDistance = math.min(actualDistance - 14.3, 4)
+			attackData.validate.targetPosition.value = targetpos - (direction * pullDistance)
+			attackData.validate.raycast = attackData.validate.raycast or {}
+			attackData.validate.raycast.cameraPosition = attackData.validate.raycast.cameraPosition or {}
+			attackData.validate.raycast.cursorDirection = attackData.validate.raycast.cursorDirection or {}
+			local extendedOrigin = selfpos + (direction * math.min(actualDistance - 12, 15))
+			attackData.validate.raycast.cameraPosition.value = extendedOrigin
+			attackData.validate.raycast.cursorDirection.value = direction
+		end
+
+		return AttackRemote:SendToServer(attackData)
+	end
 
 	local function getAttackData()
 		if Mouse.Enabled then
@@ -34463,26 +34499,26 @@ run(function()
 								end
 
 								if delta.Magnitude > AttackRange.Value then continue end
+								if not canHitWithHitreg() then continue end
 
 								local actualRoot = v.Character.PrimaryPart
 								if actualRoot then
 									local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-									local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
 									bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 									store.attackReach = (delta.Magnitude * 100) // 1 / 100
 									store.attackReachUpdate = tick() + 1
 
-									AttackRemote:FireServer({
+									fireKillauraAttack({
 										weapon = sword.tool,
 										chargedAttack = {chargeRatio = 0},
 										entityInstance = v.Character,
 										validate = {
 											raycast = {
-												cameraPosition = {value = pos},
+												cameraPosition = {value = selfpos},
 												cursorDirection = {value = dir}
 											},
 											targetPosition = {value = actualRoot.Position},
-											selfPosition = {value = pos}
+											selfPosition = {value = selfpos}
 										}
 									})
 								end
@@ -34511,6 +34547,7 @@ run(function()
 					task.wait(1 / UpdateRate.Value)
 				until not Killaura.Enabled
 			else
+				lastHitTime = 0
 				store.KillauraTarget = nil
 				for _, v in Boxes do
 					v.Adornee = nil
@@ -34583,6 +34620,14 @@ run(function()
 		Min = 1,
 		Max = 240,
 		Default = 90,
+		Suffix = 'hz'
+	})
+	HitRate = Killaura:CreateSlider({
+		Name = 'Hit rate',
+		Min = 28,
+		Max = 38,
+		Default = 34,
+		Decimal = 10,
 		Suffix = 'hz'
 	})
 	MaxTargets = Killaura:CreateSlider({
