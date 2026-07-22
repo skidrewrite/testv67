@@ -28147,6 +28147,7 @@ run(function()
 	local HitRate
 	local silentAttackRemote
 	local lastHitTime = 0
+	local loopToken = 0
 	local BASE_RANGE = 13.8
 
 	task.spawn(function()
@@ -28259,14 +28260,29 @@ run(function()
 		return targets
 	end
 
+	local function cleanupSilentAura()
+		loopToken += 1
+		lastHitTime = 0
+		store.KillauraTarget = nil
+		pcall(function()
+			if bedwars.SwordController then
+				bedwars.SwordController.disableSwingState = false
+				bedwars.SwordController.lastAttack = 0
+			end
+		end)
+	end
+
 	SilentAura = vape.Categories.Combat:CreateModule({
 		Name = 'SilentAura',
 		Function = function(callback)
+			cleanupSilentAura()
 			if not callback then return end
+			local activeToken = loopToken
 			task.spawn(function()
 				repeat
 					task.wait(1 / 60)
 					if not SilentAura.Enabled then break end
+					if activeToken ~= loopToken then break end
 
 					if (tick() - bedwars.SwordController.lastSwing) > 0.2 then continue end
 
@@ -28314,7 +28330,7 @@ run(function()
 							selfPosition = {value = selfpos}
 						}
 					})
-				until not SilentAura.Enabled
+				until not SilentAura.Enabled or activeToken ~= loopToken
 			end)
 		end
 	})
