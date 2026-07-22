@@ -34309,6 +34309,7 @@ run(function()
 	local LegitAura
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
+	local originalSwordEffectKnit, originalScytheKnit
 	local AttackRemote = {FireServer = function() end}
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
@@ -34363,8 +34364,16 @@ run(function()
 							}
 						}
 					}
-					debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 6, fake)
-					debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, fake)
+					pcall(function()
+						local _, swordEffectKnit = debug.getupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 6)
+						originalSwordEffectKnit = swordEffectKnit
+						debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 6, fake)
+					end)
+					pcall(function()
+						local _, scytheKnit = debug.getupvalue(bedwars.ScytheController.playLocalAnimation, 3)
+						originalScytheKnit = scytheKnit
+						debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, fake)
+					end)
 
 					task.spawn(function()
 						local started = false
@@ -34426,7 +34435,9 @@ run(function()
 
 							for _, v in plrs do
 								local delta = (v.RootPart.Position - selfpos)
-								local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+								local flatDelta = delta * Vector3.new(1, 0, 1)
+								if flatDelta.Magnitude <= 0 then continue end
+								local angle = math.acos(math.clamp(localfacing:Dot(flatDelta.Unit), -1, 1))
 								if angle > (math.rad(AngleSlider.Value) / 2) then continue end
 
 								table.insert(attacked, {
@@ -34497,7 +34508,7 @@ run(function()
 						entitylib.character.RootPart.CFrame = CFrame.lookAt(entitylib.character.RootPart.Position, Vector3.new(vec.X, entitylib.character.RootPart.Position.Y + 0.001, vec.Z))
 					end
 
-					task.wait(#attacked > 0 and #attacked * 0.02 or 1 / UpdateRate.Value)
+					task.wait(1 / UpdateRate.Value)
 				until not Killaura.Enabled
 			else
 				store.KillauraTarget = nil
@@ -34512,9 +34523,17 @@ run(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = true
 					end)
 				end
-				debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 6, bedwars.Knit)
-				debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
 				Attacking = false
+				pcall(function()
+					if originalSwordEffectKnit ~= nil then
+						debug.setupvalue(oldSwing or bedwars.SwordController.playSwordEffect, 6, originalSwordEffectKnit)
+					end
+				end)
+				pcall(function()
+					if originalScytheKnit ~= nil then
+						debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, originalScytheKnit)
+					end
+				end)
 				if armC0 then
 					AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
 						C0 = armC0
@@ -34562,8 +34581,8 @@ run(function()
 	UpdateRate = Killaura:CreateSlider({
 		Name = 'Update rate',
 		Min = 1,
-		Max = 120,
-		Default = 60,
+		Max = 240,
+		Default = 90,
 		Suffix = 'hz'
 	})
 	MaxTargets = Killaura:CreateSlider({
@@ -42823,6 +42842,7 @@ run(function()
     local Limit, LegitAura, Sync
     local Particles, Boxes = {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
+    local originalSwordEffectKnit, originalScytheKnit
     local AttackRemote = {FireServer = function() end}
  
     task.spawn(function()
@@ -42938,8 +42958,16 @@ run(function()
                             }
                         }
                     }
-                    debug.setupvalue(bedwars.SwordController.playSwordEffect, 6, fake)
-                    debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, fake)
+                    pcall(function()
+                        local _, swordEffectKnit = debug.getupvalue(bedwars.SwordController.playSwordEffect, 6)
+                        originalSwordEffectKnit = swordEffectKnit
+                        debug.setupvalue(bedwars.SwordController.playSwordEffect, 6, fake)
+                    end)
+                    pcall(function()
+                        local _, scytheKnit = debug.getupvalue(bedwars.ScytheController.playLocalAnimation, 3)
+                        originalScytheKnit = scytheKnit
+                        debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, fake)
+                    end)
  
                     task.spawn(function()
                         local started = false
@@ -42995,7 +43023,9 @@ run(function()
                             for _, v in plrs do
                                 local delta = (v.RootPart.Position - selfpos)
                                 if delta.Magnitude <= calculateRange(Range.Value) then
-                                    local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+                                    local flatDelta = delta * Vector3.new(1, 0, 1)
+                                    if flatDelta.Magnitude <= 0 then continue end
+                                    local angle = math.acos(math.clamp(localfacing:Dot(flatDelta.Unit), -1, 1))
                                     if angle <= (math.rad(AngleSlider.Value) / 2) then
                                         table.insert(attacked, v)
                                         targetinfo.Targets[v] = tick() + 1
@@ -43046,9 +43076,17 @@ run(function()
                         lplr.PlayerGui.MobileUI['2'].Visible = true
                     end)
                 end
-                debug.setupvalue(bedwars.SwordController.playSwordEffect, 6, bedwars.Knit)
-                debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
                 Attacking = false
+                pcall(function()
+                    if originalSwordEffectKnit ~= nil then
+                        debug.setupvalue(bedwars.SwordController.playSwordEffect, 6, originalSwordEffectKnit)
+                    end
+                end)
+                pcall(function()
+                    if originalScytheKnit ~= nil then
+                        debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, originalScytheKnit)
+                    end
+                end)
                 if armC0 then
                     AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
                         C0 = armC0
@@ -43093,8 +43131,8 @@ run(function()
     UpdateRate = FastKillaura:CreateSlider({
         Name = 'Update rate',
         Min = 1,
-        Max = 120,
-        Default = 60,
+        Max = 240,
+        Default = 120,
         Suffix = 'hz'
     })
  
